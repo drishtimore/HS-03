@@ -56,39 +56,58 @@ export default function Register() {
     }
   };
 
+  const { registerWithCredentials } = useAuth();
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) return;
 
     setIsLoading(true);
-    // Simulating register / can connect to backend API
-    setTimeout(() => {
-      setIsLoading(false);
+    setErrors({});
 
+    try {
+      if (registerWithCredentials) {
+        const res = await registerWithCredentials({
+          email: formData.email,
+          full_name: formData.fullName,
+          password: formData.password,
+          confirm_password: formData.confirmPassword,
+          role: formData.email.toLowerCase().includes('admin') ? 'admin' : 'editor',
+        });
+
+        if (res.success) {
+          setIsLoading(false);
+          navigate('/library');
+          return;
+        }
+      }
+
+      // Fallback
       const existingUsersStr = localStorage.getItem('mock_users');
       const existingUsers = existingUsersStr ? JSON.parse(existingUsersStr) : [];
-      
-      const userExists = existingUsers.some(u => u.email === formData.email);
-      if (userExists) {
+      if (existingUsers.some((u) => u.email === formData.email)) {
         setErrors({ email: 'An account with this email already exists' });
+        setIsLoading(false);
         return;
       }
 
-      const role = formData.email === 'admin@gmail.com' ? 'admin' : 'viewer';
+      const role = formData.email === 'admin@gmail.com' ? 'admin' : 'editor';
       const newUser = {
         id: 'usr-' + Date.now(),
         name: formData.fullName,
         email: formData.email,
-        password: formData.password, // In a real app, never store plain text passwords!
+        password: formData.password,
         role: role,
-        workspaces: [{ id: 'ws-default', name: 'My Workspace' }],
+        workspaces: [{ id: 'a388c08d-67f1-45ee-a10d-e2e9583c0dee', name: 'General Intelligence Workspace' }],
       };
-
       existingUsers.push(newUser);
       localStorage.setItem('mock_users', JSON.stringify(existingUsers));
-
+      setIsLoading(false);
       navigate('/login');
-    }, 600);
+    } catch (err) {
+      setIsLoading(false);
+      setErrors({ email: err.message || 'Registration failed' });
+    }
   };
 
   const fields = [

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Send,
@@ -19,96 +19,43 @@ import {
   Info,
   User,
   Bot,
+  RefreshCw,
+  Layers,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { api } from '../services/api';
 
-/* ── Mock conversation data ── */
-const MOCK_PINNED_DOCS = [
-  { id: 'doc-1', name: 'Q2_Financial_Report.pdf' },
-  { id: 'doc-2', name: 'Q3_Outlook_Manual.pdf' },
-  { id: 'doc-4', name: 'Employee_Directory.xlsx' },
-];
-
-const MOCK_INITIAL_MESSAGES = [
-  {
-    id: 'msg-1',
-    role: 'assistant',
-    content: 'Welcome to Quelle! I can help you search and analyze your documents. Ask me anything about the documents in your workspace — I\'ll provide answers with citations so you can verify every claim.',
-    confidence: null,
-    citations: [],
-    conflict: false,
-  },
-];
-
-const MOCK_RESPONSE = {
-  content: 'Revenue increased from **$12.3M in Q1** to **$14.1M in Q2**, representing a **14.6% increase** [1]. The Q3 outlook section identifies **supply-chain delays** as the primary risk factor for Q3 targets [2]. Additionally, currency fluctuations in European markets may impact international revenue by 2-4% [2].',
-  confidence: 'high',
-  citations: [
-    {
-      id: 1,
-      document_id: 'doc-1',
-      document_name: 'Q2_Financial_Report.pdf',
-      page_number: 1,
-      section_title: 'Quarterly Financial Summary',
-      snippet: 'Revenue grew from $12.3M to $14.1M quarter over quarter.',
-      score: 0.91,
-    },
-    {
-      id: 2,
-      document_id: 'doc-2',
-      document_name: 'Q3_Outlook_Manual.pdf',
-      page_number: 3,
-      section_title: 'Risk Factors & Outlook',
-      snippet: 'Supply-chain delays remain the primary risk to Q3 targets. Currency fluctuations in European markets may impact international revenue by 2-4%.',
-      score: 0.88,
-    },
-  ],
+const INITIAL_MESSAGE = {
+  id: 'msg-1',
+  role: 'assistant',
+  content:
+    "Welcome to Quelle! I am your AI Document Intelligence Assistant. Ask me anything about the documents in your workspace — all answers are citation-backed and verifiable down to the exact section and page number.",
+  confidence: null,
+  citations: [],
   conflict: false,
-};
-
-const MOCK_CONFLICT_RESPONSE = {
-  content: 'There is **conflicting information** regarding Q2 operating expenses across your documents. One source states operating expenses were **$8.2M** [1], while another reports them as **$8.7M** [2]. Please review both sources to determine the accurate figure.',
-  confidence: 'medium',
-  citations: [
-    {
-      id: 1,
-      document_id: 'doc-1',
-      document_name: 'Q2_Financial_Report.pdf',
-      page_number: 1,
-      section_title: 'Quarterly Financial Summary',
-      snippet: 'Operating expenses remained stable at $8.2M.',
-      score: 0.89,
-    },
-    {
-      id: 2,
-      document_id: 'doc-3',
-      document_name: 'Internal_Audit_Report.pdf',
-      page_number: 5,
-      section_title: 'Expense Analysis',
-      snippet: 'Total operating expenses for Q2 were recorded at $8.7M, including one-time restructuring costs.',
-      score: 0.85,
-    },
-  ],
-  conflict: true,
 };
 
 const CONFIDENCE_CONFIG = {
   high: { class: 'badge-high', label: 'High Confidence', icon: CheckCircle2 },
   medium: { class: 'badge-medium', label: 'Medium Confidence', icon: HelpCircle },
   low: { class: 'badge-low', label: 'Low Confidence', icon: AlertTriangle },
-  insufficient: { class: 'badge-insufficient', label: 'Insufficient Evidence', icon: Info },
+  insufficient: { class: 'badge-insufficient', label: 'Insufficient Evidence (Gated)', icon: Info },
 };
 
 export default function ChatView() {
-  const [messages, setMessages] = useState(MOCK_INITIAL_MESSAGES);
+  const { activeWorkspace, workspaces, setActiveWorkspace } = useAuth();
+  const [messages, setMessages] = useState([INITIAL_MESSAGE]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [scopeMode, setScopeMode] = useState('selected');
-  const [pinnedDocs, setPinnedDocs] = useState(MOCK_PINNED_DOCS);
+  const [scopeMode, setScopeMode] = useState('selected'); // 'selected' | 'all'
+  const [availableDocs, setAvailableDocs] = useState([]);
+  const [pinnedDocs, setPinnedDocs] = useState([]);
   const [showDocScope, setShowDocScope] = useState(false);
   const [expandedCitation, setExpandedCitation] = useState(null);
+  const [conversationId, setConversationId] = useState(null);
+
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
-  const queryCountRef = useRef(0);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -116,15 +63,57 @@ export default function ChatView() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, isLoading]);
 
-  const handleSend = () => {
+  // Load documents for active workspace
+  const loadWorkspaceDocuments = useCallback(async () => {
+    if (!activeWorkspace?.id) return;
+    try {
+      const docs = await api.documents.list(activeWorkspace.id);
+      const mapped = docs.map((d) => ({
+        id: d.id,
+        name: d.filename,
+        type: d.doc_type,
+        status: d.status,
+      }));
+      setAvailableDocs(mapped);
+      // Auto-pin indexed documents
+      const indexed = mapped.filter((d) => d.status === 'indexed');
+      setPinnedDocs(indexed.length > 0 ? indexed : mapped);
+    } catch (e) {
+      console.warn('Failed to load documents for chat scope:', e);
+    }
+  }, [activeWorkspace?.id]);
+
+  useEffect(() => {
+    loadWorkspaceDocuments();
+    setConversationId(null);
+    setMessages([INITIAL_MESSAGE]);
+  }, [loadWorkspaceDocuments]);
+
+  const togglePinDoc = (doc) => {
+    setPinnedDocs((prev) => {
+      const exists = prev.some((d) => d.id === doc.id);
+      if (exists) {
+        return prev.filter((d) => d.id !== doc.id);
+      } else {
+        return [...prev, doc];
+      }
+    });
+  };
+
+  const removePinnedDoc = (docId) => {
+    setPinnedDocs((prev) => prev.filter((d) => d.id !== docId));
+  };
+
+  const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
+    const userText = input.trim();
     const userMessage = {
       id: `msg-user-${Date.now()}`,
       role: 'user',
-      content: input.trim(),
+      content: userText,
       confidence: null,
       citations: [],
       conflict: false,
@@ -134,22 +123,58 @@ export default function ChatView() {
     setInput('');
     setIsLoading(true);
 
-    queryCountRef.current += 1;
+    try {
+      let currentConvId = conversationId;
+      const activeDocIds =
+        scopeMode === 'all' ? availableDocs.map((d) => d.id) : pinnedDocs.map((d) => d.id);
 
-    // Simulate response
-    setTimeout(() => {
-      const responseData = queryCountRef.current % 3 === 0 ? MOCK_CONFLICT_RESPONSE : MOCK_RESPONSE;
+      // 1. Create conversation if not exists
+      if (!currentConvId && activeWorkspace?.id) {
+        const conv = await api.chat.createConversation(
+          activeWorkspace.id,
+          userText.slice(0, 30) + '...',
+          activeDocIds
+        );
+        currentConvId = conv.id;
+        setConversationId(currentConvId);
+      }
+
+      // 2. Send message to backend
+      const res = await api.chat.sendMessage(currentConvId, userText, activeDocIds);
+
       const assistantMessage = {
         id: `msg-asst-${Date.now()}`,
         role: 'assistant',
-        content: responseData.content,
-        confidence: responseData.confidence,
-        citations: responseData.citations,
-        conflict: responseData.conflict,
+        content: res.answer,
+        confidence: res.confidence_level || 'high',
+        citations: (res.citations || []).map((c) => ({
+          id: c.citation_index,
+          document_id: c.document_id,
+          document_name: c.document_name,
+          page_number: c.page_number,
+          section_title: c.section_title,
+          snippet: c.snippet,
+          score: c.score,
+        })),
+        conflict: res.conflicts_detected || false,
+        conflict_details: res.conflict_details || [],
       };
+
       setMessages((prev) => [...prev, assistantMessage]);
+    } catch (err) {
+      console.error('Chat error:', err);
+      const errorMessage = {
+        id: `msg-err-${Date.now()}`,
+        role: 'assistant',
+        content: `Error retrieving grounded answer: ${err.message}. Please verify the backend pipeline is active and documents are indexed.`,
+        confidence: 'insufficient',
+        citations: [],
+        conflict: false,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -159,12 +184,7 @@ export default function ChatView() {
     }
   };
 
-  const removePinnedDoc = (docId) => {
-    setPinnedDocs((prev) => prev.filter((d) => d.id !== docId));
-  };
-
   const renderContent = (content) => {
-    // Simple markdown bold + citation rendering
     return content.split(/(\*\*[^*]+\*\*|\[\d+\])/g).map((part, i) => {
       if (/^\*\*[^*]+\*\*$/.test(part)) {
         return <strong key={i}>{part.replace(/\*\*/g, '')}</strong>;
@@ -175,7 +195,9 @@ export default function ChatView() {
           <button
             key={i}
             className="citation-chip mx-0.5 align-middle"
-            onClick={() => setExpandedCitation(expandedCitation === parseInt(num) ? null : parseInt(num))}
+            onClick={() =>
+              setExpandedCitation(expandedCitation === parseInt(num) ? null : parseInt(num))
+            }
             aria-label={`Citation ${num}`}
           >
             {num}
@@ -200,9 +222,9 @@ export default function ChatView() {
             boxShadow: 'var(--shadow-brutal)',
           }}
         >
-          {/* Chat header */}
+          {/* Chat Header */}
           <div
-            className="flex items-center justify-between px-5 py-3"
+            className="flex items-center justify-between px-4 py-3"
             style={{
               borderBottom: '2.5px solid var(--color-quelle-ink)',
               background: 'var(--color-quelle-cream)',
@@ -210,149 +232,167 @@ export default function ChatView() {
           >
             <div className="flex items-center gap-2">
               <div className="icon-chip icon-chip-purple icon-chip-sm flex items-center justify-center">
-                <MessageSquare size={16} strokeWidth={2.5} />
+                <Bot size={16} strokeWidth={2.5} />
               </div>
-              <h1
-                className="text-base font-bold"
-                style={{ fontFamily: 'var(--font-display)' }}
-              >
-                Document Query
-              </h1>
+              <div>
+                <h1
+                  className="text-sm font-bold leading-tight"
+                  style={{ fontFamily: 'var(--font-display)' }}
+                >
+                  Hybrid RAG Copilot
+                </h1>
+                <p className="text-[0.65rem]" style={{ color: 'var(--color-quelle-ink-muted)' }}>
+                  Workspace: {activeWorkspace?.name || 'General Intelligence'} • Real-Time Grounding
+                </p>
+              </div>
             </div>
 
-            {/* Document scope selector */}
-            <div className="relative">
-              <button
-                onClick={() => setShowDocScope(!showDocScope)}
-                className="filter-pill flex items-center gap-1"
-                style={{
-                  background: scopeMode === 'all' ? 'var(--color-quelle-yellow)' : 'white',
-                }}
-              >
-                {scopeMode === 'all' ? (
-                  <>
-                    <Globe size={12} strokeWidth={2.5} />
-                    All Documents
-                  </>
-                ) : (
-                  <>
-                    <Pin size={12} strokeWidth={2.5} />
-                    {pinnedDocs.length} pinned
-                  </>
-                )}
-                <ChevronDown size={12} strokeWidth={2.5} />
-              </button>
-
-              {showDocScope && (
-                <div
-                  className="absolute right-0 top-full mt-2 w-72 z-20 animate-fade-in"
-                  style={{
-                    border: '2.5px solid var(--color-quelle-ink)',
-                    borderRadius: 'var(--radius-brutal)',
-                    background: 'white',
-                    boxShadow: 'var(--shadow-brutal)',
-                  }}
+            {/* Scope Selector */}
+            <div className="flex items-center gap-2">
+              <div className="segmented-toggle">
+                <button
+                  className={scopeMode === 'all' ? 'active' : ''}
+                  onClick={() => setScopeMode('all')}
+                  style={{ padding: '4px 10px', fontSize: '0.7rem' }}
                 >
-                  <div className="p-3" style={{ borderBottom: '2px solid var(--color-quelle-border-light)' }}>
-                    <div className="segmented-toggle w-full">
-                      <button
-                        className={`flex-1 ${scopeMode === 'all' ? 'active' : ''}`}
-                        onClick={() => setScopeMode('all')}
-                      >
-                        <Globe size={12} /> All
-                      </button>
-                      <button
-                        className={`flex-1 ${scopeMode === 'selected' ? 'active' : ''}`}
-                        onClick={() => setScopeMode('selected')}
-                      >
-                        <Pin size={12} /> Selected
-                      </button>
-                    </div>
-                  </div>
-                  {scopeMode === 'selected' && (
-                    <div className="p-3 space-y-2 max-h-48 overflow-y-auto">
-                      {pinnedDocs.length === 0 ? (
-                        <p className="text-xs text-center py-2" style={{ color: 'var(--color-quelle-ink-muted)' }}>
-                          No documents pinned. Pin documents from the Library.
-                        </p>
-                      ) : (
-                        pinnedDocs.map((doc) => (
-                          <div
-                            key={doc.id}
-                            className="flex items-center gap-2 p-2"
-                            style={{
-                              border: '1.5px solid var(--color-quelle-border-light)',
-                              borderRadius: 'var(--radius-brutal-sm)',
-                            }}
-                          >
-                            <FileText size={14} strokeWidth={2.5} style={{ color: 'var(--color-quelle-ink-muted)', flexShrink: 0 }} />
-                            <span className="text-xs font-semibold truncate flex-1">{doc.name}</span>
-                            <button
-                              onClick={() => removePinnedDoc(doc.id)}
-                              className="p-0.5 cursor-pointer flex-shrink-0"
-                              style={{ background: 'none', border: 'none', color: 'var(--color-quelle-ink-muted)' }}
-                              aria-label={`Unpin ${doc.name}`}
-                            >
-                              <X size={12} />
-                            </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                  <div className="p-2" style={{ borderTop: '2px solid var(--color-quelle-border-light)' }}>
-                    <button
-                      onClick={() => setShowDocScope(false)}
-                      className="btn-brutal btn-brutal-primary w-full text-xs py-1.5"
-                    >
-                      Done
-                    </button>
-                  </div>
-                </div>
-              )}
+                  <Globe size={12} /> All Docs
+                </button>
+                <button
+                  className={scopeMode === 'selected' ? 'active' : ''}
+                  onClick={() => setScopeMode('selected')}
+                  style={{ padding: '4px 10px', fontSize: '0.7rem' }}
+                >
+                  <Pin size={12} /> Pinned ({pinnedDocs.length})
+                </button>
+              </div>
+
+              <button
+                className="btn-brutal btn-brutal-secondary py-1 px-2 text-xs flex items-center gap-1"
+                onClick={() => setShowDocScope(!showDocScope)}
+                title="Manage Document Scope"
+              >
+                <Layers size={13} />
+                <span className="hidden sm:inline">Scope</span>
+              </button>
             </div>
           </div>
 
-          {/* Messages area */}
-          <div
-            className="flex-1 overflow-y-auto p-5 space-y-5"
-            onClick={() => showDocScope && setShowDocScope(false)}
-          >
-            {messages.map((msg) => (
-              <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className="max-w-[85%] space-y-2">
-                  {/* Role indicator */}
-                  <div className={`flex items-center gap-1.5 ${msg.role === 'user' ? 'justify-end' : ''}`}>
-                    <div
-                      className="flex items-center justify-center w-5 h-5"
-                      style={{
-                        border: '1.5px solid var(--color-quelle-ink)',
-                        borderRadius: '50%',
-                        background: msg.role === 'user' ? 'var(--color-quelle-yellow)' : 'var(--color-quelle-purple)',
-                      }}
+          {/* Pinned scope chip bar */}
+          {scopeMode === 'selected' && (
+            <div
+              className="flex items-center gap-1.5 px-4 py-2 overflow-x-auto"
+              style={{
+                borderBottom: '1.5px solid var(--color-quelle-border-light)',
+                background: 'var(--color-quelle-offwhite)',
+              }}
+            >
+              <span
+                className="text-[0.65rem] font-bold uppercase flex-shrink-0"
+                style={{ color: 'var(--color-quelle-ink-muted)' }}
+              >
+                Scope:
+              </span>
+              {pinnedDocs.length === 0 ? (
+                <span className="text-xs text-red-500 font-semibold">
+                  No documents pinned! Click Scope to select sources.
+                </span>
+              ) : (
+                pinnedDocs.map((doc) => (
+                  <span
+                    key={doc.id}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold rounded-full flex-shrink-0"
+                    style={{
+                      background: 'white',
+                      border: '1.5px solid var(--color-quelle-ink)',
+                      color: 'var(--color-quelle-ink)',
+                    }}
+                  >
+                    <FileText size={10} strokeWidth={2.5} />
+                    <span className="truncate max-w-[140px]">{doc.name}</span>
+                    <button
+                      onClick={() => removePinnedDoc(doc.id)}
+                      className="hover:opacity-70 cursor-pointer ml-0.5"
                     >
-                      {msg.role === 'user' ?
-                        <User size={10} strokeWidth={3} /> :
-                        <Bot size={10} strokeWidth={3} color="white" />
-                      }
-                    </div>
-                    <span className="text-xs font-bold" style={{ color: 'var(--color-quelle-ink-muted)' }}>
-                      {msg.role === 'user' ? 'You' : 'Quelle'}
-                    </span>
-                  </div>
+                      <X size={10} />
+                    </button>
+                  </span>
+                ))
+              )}
+            </div>
+          )}
 
+          {/* Scope Selector Drawer */}
+          {showDocScope && (
+            <div
+              className="p-3 bg-yellow-50 animate-fade-in"
+              style={{ borderBottom: '2px solid var(--color-quelle-ink)' }}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold uppercase">Pin Documents For Grounding</span>
+                <button
+                  onClick={() => setShowDocScope(false)}
+                  className="p-1 hover:bg-yellow-200 rounded"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto">
+                {availableDocs.map((doc) => {
+                  const isPinned = pinnedDocs.some((d) => d.id === doc.id);
+                  return (
+                    <button
+                      key={doc.id}
+                      onClick={() => togglePinDoc(doc)}
+                      className={`text-xs px-2.5 py-1 rounded font-semibold transition-all ${
+                        isPinned
+                          ? 'bg-black text-white shadow-sm'
+                          : 'bg-white text-gray-700 border border-gray-300'
+                      }`}
+                    >
+                      {isPinned ? '✓ ' : '+ '} {doc.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Message history */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex gap-3 animate-fade-in ${
+                  msg.role === 'user' ? 'justify-end' : 'justify-start'
+                }`}
+              >
+                {msg.role === 'assistant' && (
+                  <div className="icon-chip icon-chip-purple icon-chip-sm flex items-center justify-center flex-shrink-0 mt-1">
+                    <Sparkles size={14} strokeWidth={2.5} />
+                  </div>
+                )}
+
+                <div
+                  className={`max-w-[85%] sm:max-w-[75%] space-y-2 ${
+                    msg.role === 'user' ? 'items-end' : 'items-start'
+                  }`}
+                >
                   {/* Bubble */}
-                  <div className={`chat-bubble ${msg.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-assistant'}`}>
-                    <div className="text-sm leading-relaxed">
-                      {msg.role === 'assistant' ? renderContent(msg.content) : msg.content}
-                    </div>
+                  <div
+                    className={
+                      msg.role === 'user'
+                        ? 'chat-bubble chat-bubble-user text-sm'
+                        : 'chat-bubble chat-bubble-assistant text-sm'
+                    }
+                  >
+                    {renderContent(msg.content)}
                   </div>
 
                   {/* Confidence badge */}
                   {msg.confidence && (
-                    <div className={`flex items-center gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
+                    <div className="flex items-center gap-2">
                       {(() => {
-                        const conf = CONFIDENCE_CONFIG[msg.confidence];
+                        const conf = CONFIDENCE_CONFIG[msg.confidence] || CONFIDENCE_CONFIG.high;
                         const ConfIcon = conf.icon;
                         return (
                           <span className={`badge-brutal ${conf.class} flex items-center gap-1`}>
@@ -364,17 +404,24 @@ export default function ChatView() {
                     </div>
                   )}
 
-                  {/* Conflict banner */}
+                  {/* Conflict detection alert */}
                   {msg.conflict && (
                     <div className="conflict-banner animate-fade-in">
                       <div className="flex items-center gap-2 mb-2">
-                        <AlertTriangle size={16} strokeWidth={2.5} style={{ color: 'var(--color-quelle-orange-dark)' }} />
-                        <span className="text-sm font-bold" style={{ fontFamily: 'var(--font-display)' }}>
-                          Conflicting Information Detected
+                        <AlertTriangle
+                          size={16}
+                          strokeWidth={2.5}
+                          style={{ color: 'var(--color-quelle-orange-dark)' }}
+                        />
+                        <span
+                          className="text-sm font-bold"
+                          style={{ fontFamily: 'var(--font-display)' }}
+                        >
+                          Cross-Source Conflict Detected
                         </span>
                       </div>
                       <p className="text-xs mb-3" style={{ color: 'var(--color-quelle-ink-light)' }}>
-                        Sources disagree on certain values. Review both citations below:
+                        Retrieved sources present conflicting claims. Compare citations below:
                       </p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {msg.citations.map((cit) => (
@@ -388,12 +435,15 @@ export default function ChatView() {
                             }}
                           >
                             <div className="flex items-center gap-1 mb-1">
-                              <span className="citation-chip" style={{ fontSize: '0.65rem', minWidth: '20px', height: '20px' }}>
+                              <span
+                                className="citation-chip"
+                                style={{ fontSize: '0.65rem', minWidth: '20px', height: '20px' }}
+                              >
                                 {cit.id}
                               </span>
                               <span className="text-xs font-bold truncate">{cit.document_name}</span>
                             </div>
-                            <p className="text-xs" style={{ color: 'var(--color-quelle-ink-light)' }}>
+                            <p className="text-xs italic" style={{ color: 'var(--color-quelle-ink-light)' }}>
                               "{cit.snippet}"
                             </p>
                             <p className="text-[0.65rem] mt-1" style={{ color: 'var(--color-quelle-ink-muted)' }}>
@@ -406,26 +456,46 @@ export default function ChatView() {
                   )}
 
                   {/* Citations list */}
-                  {msg.citations.length > 0 && !msg.conflict && (
+                  {msg.citations && msg.citations.length > 0 && !msg.conflict && (
                     <div className="space-y-1">
                       {msg.citations.map((cit) => (
                         <div key={cit.id}>
                           <button
                             className="flex items-center gap-2 w-full text-left py-1 px-2 cursor-pointer"
                             style={{
-                              background: expandedCitation === cit.id ? 'var(--color-quelle-cream)' : 'transparent',
-                              border: expandedCitation === cit.id ? '1.5px solid var(--color-quelle-border-light)' : '1.5px solid transparent',
+                              background:
+                                expandedCitation === cit.id ? 'var(--color-quelle-cream)' : 'transparent',
+                              border:
+                                expandedCitation === cit.id
+                                  ? '1.5px solid var(--color-quelle-border-light)'
+                                  : '1.5px solid transparent',
                               borderRadius: 'var(--radius-brutal-sm)',
                             }}
-                            onClick={() => setExpandedCitation(expandedCitation === cit.id ? null : cit.id)}
+                            onClick={() =>
+                              setExpandedCitation(expandedCitation === cit.id ? null : cit.id)
+                            }
                           >
-                            <span className="citation-chip" style={{ fontSize: '0.6rem', minWidth: '18px', height: '18px', padding: '0 4px' }}>
+                            <span
+                              className="citation-chip"
+                              style={{
+                                fontSize: '0.6rem',
+                                minWidth: '18px',
+                                height: '18px',
+                                padding: '0 4px',
+                              }}
+                            >
                               {cit.id}
                             </span>
-                            <span className="text-xs font-semibold truncate" style={{ color: 'var(--color-quelle-ink-light)' }}>
+                            <span
+                              className="text-xs font-semibold truncate"
+                              style={{ color: 'var(--color-quelle-ink-light)' }}
+                            >
                               {cit.document_name}
                             </span>
-                            <span className="text-[0.65rem] ml-auto flex-shrink-0" style={{ color: 'var(--color-quelle-ink-muted)' }}>
+                            <span
+                              className="text-[0.65rem] ml-auto flex-shrink-0"
+                              style={{ color: 'var(--color-quelle-ink-muted)' }}
+                            >
                               p.{cit.page_number}
                             </span>
                             {expandedCitation === cit.id ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -444,8 +514,11 @@ export default function ChatView() {
                                 "{cit.snippet}"
                               </p>
                               <div className="flex items-center justify-between mt-2">
-                                <span className="text-[0.65rem]" style={{ color: 'var(--color-quelle-ink-muted)' }}>
-                                  Score: {cit.score}
+                                <span
+                                  className="text-[0.65rem]"
+                                  style={{ color: 'var(--color-quelle-ink-muted)' }}
+                                >
+                                  Cosine Relevance: {cit.score}
                                 </span>
                                 <Link
                                   to={`/viewer/${cit.document_id}`}
@@ -456,7 +529,7 @@ export default function ChatView() {
                                   }}
                                 >
                                   <BookOpen size={10} strokeWidth={2.5} />
-                                  View Source
+                                  Inspect Source
                                 </Link>
                               </div>
                             </div>
@@ -473,9 +546,14 @@ export default function ChatView() {
             {isLoading && (
               <div className="flex justify-start">
                 <div className="chat-bubble chat-bubble-assistant flex items-center gap-2">
-                  <Loader2 size={16} strokeWidth={2.5} className="animate-spin" style={{ color: 'var(--color-quelle-purple)' }} />
+                  <Loader2
+                    size={16}
+                    strokeWidth={2.5}
+                    className="animate-spin"
+                    style={{ color: 'var(--color-quelle-purple)' }}
+                  />
                   <span className="text-sm" style={{ color: 'var(--color-quelle-ink-muted)' }}>
-                    Searching documents...
+                    Generating Hybrid RRF Grounded Answer...
                   </span>
                 </div>
               </div>
@@ -499,7 +577,7 @@ export default function ChatView() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Ask a question about your documents..."
+                  placeholder="Ask a question about your indexed documents..."
                   rows={1}
                   className="input-brutal pr-12 resize-none"
                   style={{ minHeight: '44px', maxHeight: '120px' }}
@@ -518,13 +596,16 @@ export default function ChatView() {
                 <Send size={18} strokeWidth={2.5} />
               </button>
             </div>
-            <p className="text-[0.65rem] mt-2 text-center" style={{ color: 'var(--color-quelle-ink-muted)' }}>
-              Quelle only answers from your uploaded documents. All claims are citation-backed.
+            <p
+              className="text-[0.65rem] mt-2 text-center"
+              style={{ color: 'var(--color-quelle-ink-muted)' }}
+            >
+              Zero Hallucination Guarantee: Quelle refuses ungrounded questions and enforces confidence thresholds.
             </p>
           </div>
         </div>
 
-        {/* ── Right Sidebar: Active Citations (desktop) ── */}
+        {/* ── Right Sidebar: Session Info & Quick Actions ── */}
         <div
           className="hidden lg:flex flex-col w-80 flex-shrink-0 animate-slide-in-right"
           style={{
@@ -544,29 +625,31 @@ export default function ChatView() {
           >
             <Sparkles size={16} strokeWidth={2.5} style={{ color: 'var(--color-quelle-purple)' }} />
             <h2 className="text-sm font-bold" style={{ fontFamily: 'var(--font-display)' }}>
-              Session Info
+              RAG Session Inspector
             </h2>
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {/* Scope info */}
             <div>
-              <p className="label-brutal">Active Scope</p>
+              <p className="label-brutal">Active Search Scope</p>
               <p className="text-sm font-semibold">
-                {scopeMode === 'all' ? 'All workspace documents' : `${pinnedDocs.length} pinned documents`}
+                {scopeMode === 'all'
+                  ? 'All workspace documents'
+                  : `${pinnedDocs.length} pinned document(s)`}
               </p>
             </div>
 
             {/* Pinned docs list */}
             {scopeMode === 'selected' && (
               <div>
-                <p className="label-brutal">Pinned Documents</p>
+                <p className="label-brutal">Pinned Sources</p>
                 <div className="space-y-1.5">
                   {pinnedDocs.map((doc) => (
                     <Link
                       key={doc.id}
                       to={`/viewer/${doc.id}`}
-                      className="flex items-center gap-2 p-2 no-underline"
+                      className="flex items-center gap-2 p-2 no-underline hover:bg-gray-50"
                       style={{
                         textDecoration: 'none',
                         color: 'inherit',
@@ -575,7 +658,11 @@ export default function ChatView() {
                         background: 'white',
                       }}
                     >
-                      <FileText size={12} strokeWidth={2.5} style={{ color: 'var(--color-quelle-ink-muted)', flexShrink: 0 }} />
+                      <FileText
+                        size={12}
+                        strokeWidth={2.5}
+                        style={{ color: 'var(--color-quelle-ink-muted)', flexShrink: 0 }}
+                      />
                       <span className="text-xs font-semibold truncate">{doc.name}</span>
                     </Link>
                   ))}
@@ -585,14 +672,14 @@ export default function ChatView() {
 
             {/* Conversation stats */}
             <div>
-              <p className="label-brutal">Conversation</p>
+              <p className="label-brutal">Session Metrics</p>
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs">
                   <span style={{ color: 'var(--color-quelle-ink-muted)' }}>Messages</span>
                   <span className="font-bold">{messages.length}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
-                  <span style={{ color: 'var(--color-quelle-ink-muted)' }}>Citations used</span>
+                  <span style={{ color: 'var(--color-quelle-ink-muted)' }}>Citations verified</span>
                   <span className="font-bold">
                     {messages.reduce((acc, m) => acc + (m.citations?.length || 0), 0)}
                   </span>
@@ -602,24 +689,24 @@ export default function ChatView() {
 
             {/* Quick actions */}
             <div>
-              <p className="label-brutal">Quick Actions</p>
+              <p className="label-brutal">Actions</p>
               <div className="space-y-1.5">
                 <button
                   className="btn-brutal btn-brutal-secondary w-full text-xs py-2"
                   onClick={() => {
-                    setMessages(MOCK_INITIAL_MESSAGES);
-                    queryCountRef.current = 0;
+                    setMessages([INITIAL_MESSAGE]);
+                    setConversationId(null);
                   }}
                 >
-                  New Conversation
+                  New Research Session
                 </button>
                 <Link
                   to="/library"
                   className="btn-brutal btn-brutal-secondary w-full text-xs py-2"
-                  style={{ textDecoration: 'none', display: 'flex' }}
+                  style={{ textDecoration: 'none', display: 'flex', justifyContent: 'center' }}
                 >
                   <BookOpen size={12} strokeWidth={2.5} />
-                  Browse Library
+                  Manage Workspace Library
                 </Link>
               </div>
             </div>

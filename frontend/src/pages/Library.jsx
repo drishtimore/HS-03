@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Upload,
   FileText,
@@ -15,52 +15,14 @@ import {
   Filter,
   ScanLine,
   Plus,
+  Trash2,
+  FolderOpen,
+  RefreshCw,
+  X,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-
-/* ── Mock Data ── */
-const MOCK_DOCUMENTS = [
-  {
-    id: 'doc-1', filename: 'Q2_Financial_Report.pdf', type: 'native_pdf',
-    status: 'indexed', pages: 12, uploadedAt: '2026-09-20', tags: ['finance', 'quarterly'],
-    size: '2.4 MB',
-  },
-  {
-    id: 'doc-2', filename: 'Q3_Outlook_Manual.pdf', type: 'scanned_pdf',
-    status: 'indexed', pages: 28, uploadedAt: '2026-09-18', tags: ['outlook', 'manual'],
-    size: '8.1 MB',
-  },
-  {
-    id: 'doc-3', filename: 'Invoice_Sept_2026.png', type: 'image',
-    status: 'processing', pages: 1, uploadedAt: '2026-09-25', tags: ['invoice'],
-    size: '1.2 MB',
-  },
-  {
-    id: 'doc-4', filename: 'Employee_Directory.xlsx', type: 'table_doc',
-    status: 'indexed', pages: 3, uploadedAt: '2026-09-22', tags: ['hr', 'directory'],
-    size: '340 KB',
-  },
-  {
-    id: 'doc-5', filename: 'Policy_Document_v3.docx', type: 'office_doc',
-    status: 'queued', pages: 45, uploadedAt: '2026-09-26', tags: ['policy', 'compliance'],
-    size: '5.6 MB',
-  },
-  {
-    id: 'doc-6', filename: 'Architecture_Diagram.tiff', type: 'image',
-    status: 'failed', pages: 1, uploadedAt: '2026-09-24', tags: ['engineering'],
-    size: '12.3 MB',
-  },
-  {
-    id: 'doc-7', filename: 'Board_Meeting_Notes.pdf', type: 'scanned_pdf',
-    status: 'extracting', pages: 8, uploadedAt: '2026-09-23', tags: ['board', 'meeting'],
-    size: '3.7 MB',
-  },
-  {
-    id: 'doc-8', filename: 'Revenue_Projections.csv', type: 'table_doc',
-    status: 'embedding', pages: 1, uploadedAt: '2026-09-25', tags: ['finance', 'projection'],
-    size: '89 KB',
-  },
-];
+import { useAuth } from '../context/AuthContext';
+import { api } from '../services/api';
 
 const DOC_TYPE_CONFIG = {
   native_pdf: { icon: FileText, color: 'icon-chip-green', label: 'PDF' },
@@ -97,8 +59,18 @@ const STATUS_FILTERS = [
   { key: 'failed', label: 'Failed' },
 ];
 
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
 export default function LibraryView() {
-  const [documents] = useState(MOCK_DOCUMENTS);
+  const { activeWorkspace, workspaces, setActiveWorkspace } = useAuth();
+  const [documents, setDocuments] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -106,6 +78,34 @@ export default function LibraryView() {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadQueue, setUploadQueue] = useState([]);
   const fileInputRef = useRef(null);
+
+  const fetchDocuments = useCallback(async () => {
+    if (!activeWorkspace?.id) return;
+    try {
+      const data = await api.documents.list(activeWorkspace.id);
+      const mapped = data.map((doc) => ({
+        id: doc.id,
+        filename: doc.filename,
+        type: doc.doc_type || 'native_pdf',
+        status: doc.status || 'queued',
+        pages: doc.page_count || 1,
+        uploadedAt: doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'Just now',
+        tags: [doc.doc_type || 'document'].filter(Boolean),
+        size: formatBytes(doc.file_size_bytes),
+      }));
+      setDocuments(mapped);
+    } catch (err) {
+      console.warn('Failed to load documents from backend, retaining current state:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [activeWorkspace?.id]);
+
+  useEffect(() => {
+    fetchDocuments();
+    const interval = setInterval(fetchDocuments, 8000);
+    return () => clearInterval(interval);
+  }, [fetchDocuments]);
 
   /* ── Drag-and-drop ── */
   const handleDrag = useCallback((e) => {
@@ -125,48 +125,91 @@ export default function LibraryView() {
     setIsDragging(false);
   }, []);
 
-  const simulateUpload = (files) => {
+  const handleRealUpload = async (files) => {
+    if (!activeWorkspace?.id || files.length === 0) return;
+
     const newItems = files.map((f, i) => ({
       id: `upload-${Date.now()}-${i}`,
       name: f.name,
       size: (f.size / (1024 * 1024)).toFixed(1) + ' MB',
-      progress: 0,
+      progress: 25,
+      status: 'Uploading...',
     }));
     setUploadQueue((prev) => [...prev, ...newItems]);
 
-    // Simulate progress
-    newItems.forEach((item) => {
-      let p = 0;
-      const interval = setInterval(() => {
-        p += Math.random() * 20;
-        if (p >= 100) {
-          p = 100;
-          clearInterval(interval);
-          setTimeout(() => {
-            setUploadQueue((prev) => prev.filter((u) => u.id !== item.id));
-          }, 1000);
+    try {
+      // Send real upload to backend
+      const res = await api.documents.upload(activeWorkspace.id, files);
+      
+      // Update progress to 60%
+      setUploadQueue((prev) =>
+        prev.map((u) => ({ ...u, progress: 60, status: 'Processing Pipeline...' }))
+      );
+
+      // Track uploaded document statuses
+      const results = res.results || [];
+      const docIds = results.map((r) => r.document_id).filter(Boolean);
+
+      // Poll until processed
+      let pollCount = 0;
+      const pollInterval = setInterval(async () => {
+        pollCount += 1;
+        let allDone = true;
+
+        for (const docId of docIds) {
+          try {
+            const st = await api.documents.getStatus(docId);
+            if (st.status !== 'indexed' && st.status !== 'failed') {
+              allDone = false;
+            }
+          } catch {
+            // ignore
+          }
         }
-        setUploadQueue((prev) =>
-          prev.map((u) => (u.id === item.id ? { ...u, progress: Math.min(p, 100) } : u))
-        );
-      }, 300);
-    });
+
+        if (allDone || pollCount >= 10) {
+          clearInterval(pollInterval);
+          setUploadQueue((prev) =>
+            prev.map((u) => ({ ...u, progress: 100, status: 'Complete' }))
+          );
+          setTimeout(() => {
+            setUploadQueue([]);
+            fetchDocuments();
+          }, 1200);
+        } else {
+          setUploadQueue((prev) =>
+            prev.map((u) => ({ ...u, progress: Math.min(60 + pollCount * 8, 95) }))
+          );
+        }
+      }, 1500);
+
+      fetchDocuments();
+    } catch (err) {
+      console.error('Upload error:', err);
+      setUploadQueue((prev) =>
+        prev.map((u) => ({ ...u, progress: 100, status: `Failed: ${err.message}` }))
+      );
+      setTimeout(() => setUploadQueue([]), 3000);
+    }
   };
 
-  const handleDrop = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length) {
-      simulateUpload(files);
-    }
-  }, []);
+  const handleDrop = useCallback(
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length) {
+        handleRealUpload(files);
+      }
+    },
+    [activeWorkspace?.id]
+  );
 
   const handleFileSelect = (e) => {
     const files = Array.from(e.target.files);
     if (files.length) {
-      simulateUpload(files);
+      handleRealUpload(files);
     }
   };
 
@@ -174,9 +217,24 @@ export default function LibraryView() {
     setUploadQueue((prev) => prev.filter((u) => u.id !== id));
   };
 
+  const handleDelete = async (e, docId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to permanently delete this document and its indexed vector embeddings?')) {
+      return;
+    }
+    try {
+      await api.documents.delete(docId);
+      setDocuments((prev) => prev.filter((d) => d.id !== docId));
+    } catch (err) {
+      alert(`Delete failed: ${err.message}`);
+    }
+  };
+
   /* ── Filter documents ── */
   const filtered = documents.filter((doc) => {
-    const matchSearch = doc.filename.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    const matchSearch =
+      doc.filename.toLowerCase().includes(searchQuery.toLowerCase()) ||
       doc.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
     const matchType = typeFilter === 'all' || doc.type === typeFilter;
     const matchStatus = statusFilter === 'all' || doc.status === statusFilter;
@@ -185,17 +243,50 @@ export default function LibraryView() {
 
   return (
     <main className="max-w-[1400px] mx-auto px-4 sm:px-6 py-8 sm:py-10">
-      {/* ── Page Header ── */}
-      <div className="mb-8 stagger-children">
-        <h1
-          className="text-3xl sm:text-4xl mb-2"
-          style={{ fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '-0.02em' }}
-        >
-          Document Library
-        </h1>
-        <p className="text-sm" style={{ color: 'var(--color-quelle-ink-muted)' }}>
-          Upload, manage, and search your document collection. {documents.length} documents in workspace.
-        </p>
+      {/* ── Page Header & Workspace Selector ── */}
+      <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1
+            className="text-3xl sm:text-4xl mb-2"
+            style={{ fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '-0.02em' }}
+          >
+            Document Library
+          </h1>
+          <p className="text-sm" style={{ color: 'var(--color-quelle-ink-muted)' }}>
+            Upload, manage, and search your document collection. {documents.length} live indexed documents.
+          </p>
+        </div>
+
+        {/* Workspace Switcher */}
+        {workspaces && workspaces.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold uppercase" style={{ color: 'var(--color-quelle-ink-muted)' }}>
+              Workspace:
+            </span>
+            <select
+              value={activeWorkspace?.id || ''}
+              onChange={(e) => {
+                const found = workspaces.find((w) => w.id === e.target.value);
+                if (found) setActiveWorkspace(found);
+              }}
+              className="input-brutal text-sm py-1.5 px-3 font-semibold cursor-pointer"
+              style={{ minWidth: '220px' }}
+            >
+              {workspaces.map((ws) => (
+                <option key={ws.id} value={ws.id}>
+                  {ws.name} ({ws.document_count || 0} docs)
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={fetchDocuments}
+              className="btn-brutal btn-brutal-secondary p-2"
+              title="Refresh documents"
+            >
+              <RefreshCw size={15} />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Upload Dropzone ── */}
@@ -209,13 +300,15 @@ export default function LibraryView() {
         role="button"
         tabIndex={0}
         aria-label="Upload documents"
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click();
+        }}
       >
         <input
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.docx,.xlsx,.csv,.zip"
+          accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.docx,.xlsx,.csv,.txt,.zip"
           onChange={handleFileSelect}
           className="hidden"
         />
@@ -228,12 +321,15 @@ export default function LibraryView() {
               Drop files here or click to upload
             </p>
             <p className="text-xs mt-1" style={{ color: 'var(--color-quelle-ink-muted)' }}>
-              PDF, PNG, JPG, TIFF, DOCX, XLSX, CSV, ZIP — up to 200MB per file
+              PDF, PNG, JPG, TIFF, DOCX, XLSX, CSV, TXT — auto-classified & OCR parsed
             </p>
           </div>
           <button
             className="btn-brutal btn-brutal-primary mt-2"
-            onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              fileInputRef.current?.click();
+            }}
           >
             <Plus size={16} strokeWidth={3} />
             Choose Files
@@ -261,7 +357,7 @@ export default function LibraryView() {
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-sm font-semibold truncate">{item.name}</span>
                   <span className="text-xs font-bold" style={{ color: 'var(--color-quelle-ink-muted)' }}>
-                    {Math.round(item.progress)}%
+                    {item.status} ({Math.round(item.progress)}%)
                   </span>
                 </div>
                 <div className="progress-brutal">
@@ -269,7 +365,8 @@ export default function LibraryView() {
                     className="progress-brutal-fill"
                     style={{
                       width: `${item.progress}%`,
-                      background: item.progress >= 100 ? 'var(--color-quelle-green)' : 'var(--color-quelle-yellow)',
+                      background:
+                        item.progress >= 100 ? 'var(--color-quelle-green)' : 'var(--color-quelle-yellow)',
                     }}
                   />
                 </div>
@@ -365,17 +462,19 @@ export default function LibraryView() {
       </div>
 
       {/* ── Documents Grid/List ── */}
-      {filtered.length === 0 ? (
-        <div
-          className="text-center py-16 brutal-card"
-          style={{ background: 'var(--color-quelle-cream)' }}
-        >
+      {loading ? (
+        <div className="text-center py-16 brutal-card" style={{ background: 'var(--color-quelle-cream)' }}>
+          <Loader2 size={32} className="animate-spin mx-auto mb-2 text-gray-500" />
+          <p className="text-base font-bold">Loading workspace documents...</p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-16 brutal-card" style={{ background: 'var(--color-quelle-cream)' }}>
           <Search size={32} strokeWidth={2} style={{ color: 'var(--color-quelle-ink-muted)', margin: '0 auto 12px' }} />
           <p className="text-base font-bold mb-1" style={{ fontFamily: 'var(--font-display)' }}>
             No documents found
           </p>
           <p className="text-sm" style={{ color: 'var(--color-quelle-ink-muted)' }}>
-            Try adjusting your filters or upload new documents.
+            Upload files above to begin ingestion and indexing.
           </p>
         </div>
       ) : viewMode === 'grid' ? (
@@ -389,28 +488,36 @@ export default function LibraryView() {
               <Link
                 key={doc.id}
                 to={`/viewer/${doc.id}`}
-                className="brutal-card p-5 flex flex-col gap-3 no-underline"
+                className="brutal-card p-5 flex flex-col gap-3 no-underline group relative"
                 style={{ textDecoration: 'none', color: 'inherit' }}
               >
                 <div className="flex items-start justify-between">
                   <div className={`icon-chip ${typeConfig.color} flex items-center justify-center`}>
                     <TypeIcon size={20} strokeWidth={2.5} />
                   </div>
-                  <span className={`badge-brutal ${statusConfig.class} flex items-center gap-1`}>
-                    <StatusIcon size={10} strokeWidth={3} />
-                    {statusConfig.label}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`badge-brutal ${statusConfig.class} flex items-center gap-1`}>
+                      <StatusIcon size={10} strokeWidth={3} className={doc.status === 'processing' || doc.status === 'extracting' ? 'animate-spin' : ''} />
+                      {statusConfig.label}
+                    </span>
+                    <button
+                      onClick={(e) => handleDelete(e, doc.id)}
+                      className="p-1 hover:text-red-600 rounded opacity-70 hover:opacity-100 transition-opacity"
+                      title="Delete document"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <h3
-                    className="text-sm font-bold truncate mb-1"
-                    style={{ fontFamily: 'var(--font-display)' }}
-                  >
+                  <h3 className="text-sm font-bold truncate mb-1" style={{ fontFamily: 'var(--font-display)' }}>
                     {doc.filename}
                   </h3>
                   <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-quelle-ink-muted)' }}>
-                    <span>{doc.pages} {doc.pages === 1 ? 'page' : 'pages'}</span>
+                    <span>
+                      {doc.pages} {doc.pages === 1 ? 'page' : 'pages'}
+                    </span>
                     <span>•</span>
                     <span>{doc.size}</span>
                   </div>
@@ -487,6 +594,13 @@ export default function LibraryView() {
                     <StatusIcon size={10} strokeWidth={3} />
                     {statusConfig.label}
                   </span>
+                  <button
+                    onClick={(e) => handleDelete(e, doc.id)}
+                    className="p-1 hover:text-red-600 rounded ml-1"
+                    title="Delete document"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               </Link>
             );

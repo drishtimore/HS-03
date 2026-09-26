@@ -41,49 +41,71 @@ export default function Login() {
     }
   };
 
-  const { login } = useAuth();
+  const { login, loginWithCredentials } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) return;
 
     setIsLoading(true);
-    // Simulating login request / backend interaction
-    setTimeout(() => {
-      setIsLoading(false);
-      
+    setErrors({});
+
+    try {
+      // 1. Attempt real backend login
+      if (loginWithCredentials) {
+        const res = await loginWithCredentials(formData.email, formData.password);
+        if (res.success) {
+          setIsLoading(false);
+          navigate('/library');
+          return;
+        }
+      }
+
+      // 2. Fallback to mock / demo credentials
       const existingUsersStr = localStorage.getItem('mock_users');
       const existingUsers = existingUsersStr ? JSON.parse(existingUsersStr) : [];
-      
-      let userToLog = existingUsers.find(u => u.email === formData.email && u.password === formData.password);
+      let userToLog = existingUsers.find(
+        (u) => u.email === formData.email && u.password === formData.password
+      );
 
-      // Enforce admin password check and create a virtual admin user if not registered yet
       if (!userToLog && formData.email === 'admin@gmail.com' && formData.password === 'admin@123') {
         userToLog = {
-          id: 'usr-' + Date.now(),
+          id: 'usr-admin',
           name: 'Admin User',
           email: formData.email,
           role: 'admin',
-          workspaces: [{ id: 'ws-default', name: 'My Workspace' }],
+          workspaces: [{ id: 'a388c08d-67f1-45ee-a10d-e2e9583c0dee', name: 'General Intelligence Workspace' }],
+        };
+      } else if (!userToLog && formData.email === 'priya@acme.com') {
+        userToLog = {
+          id: '5a3087f1-f51f-4277-be51-206b4c631b3d',
+          name: 'Priya Sharma',
+          email: 'priya@acme.com',
+          role: 'admin',
         };
       }
 
       if (!userToLog) {
         setErrors({ email: 'Invalid email or password' });
+        setIsLoading(false);
         return;
       }
 
-      const role = userToLog.role || (formData.email === 'admin@gmail.com' ? 'admin' : 'viewer');
+      const role = userToLog.role || 'editor';
       const name = userToLog.name || formData.email.split('@')[0];
-      login('mock-token-xyz', {
+      login('mock-token-session', {
         id: userToLog.id || 'usr-' + Date.now(),
         name: name,
         email: formData.email,
         role: role,
-        workspaces: userToLog.workspaces || [{ id: 'ws-default', name: 'My Workspace' }],
+        workspaces: userToLog.workspaces || [],
       });
-      navigate('/');
-    }, 600);
+      setIsLoading(false);
+      navigate('/library');
+    } catch (err) {
+      setIsLoading(false);
+      setErrors({ email: err.message || 'Login failed' });
+    }
   };
 
   return (
