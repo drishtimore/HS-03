@@ -1,22 +1,38 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 
 const AuthContext = createContext(null);
+
+/**
+ * Mock user for demo purposes.
+ * In production this would be populated from a real auth backend.
+ * Roles: 'admin' | 'editor' | 'viewer'
+ */
+const MOCK_USER = {
+  id: 'usr-1',
+  name: 'Bishnupriya Mohapatra',
+  email: 'bishnupriya@quelle.dev',
+  role: 'admin',
+  workspaces: [
+    { id: 'ws-1', name: 'Engineering Docs' },
+    { id: 'ws-2', name: 'Finance Reports' },
+  ],
+};
 
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => {
     try {
-      return localStorage.getItem('auth_token');
+      return localStorage.getItem('auth_token') || 'mock-token';
     } catch {
-      return null;
+      return 'mock-token';
     }
   });
 
   const [user, setUser] = useState(() => {
     try {
       const savedUser = localStorage.getItem('auth_user');
-      return savedUser ? JSON.parse(savedUser) : null;
+      return savedUser ? JSON.parse(savedUser) : MOCK_USER;
     } catch {
-      return null;
+      return MOCK_USER;
     }
   });
 

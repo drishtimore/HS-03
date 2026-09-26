@@ -1,18 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { Cookie, X } from 'lucide-react';
 
 export default function CookieBanner() {
-  const [isVisible, setIsVisible] = useState(false);
-
-  useEffect(() => {
+  const [isVisible, setIsVisible] = useState(() => {
     try {
-      const consent = localStorage.getItem('cookie_consent');
-      if (!consent) {
-        setIsVisible(true);
-      }
+      return !localStorage.getItem('cookie_consent');
     } catch {
-      setIsVisible(true);
+      return true;
     }
-  }, []);
+  });
 
   const handleConsent = (choice) => {
     try {
@@ -28,21 +24,46 @@ export default function CookieBanner() {
   return (
     <aside
       aria-label="Cookie consent"
-      className="fixed bottom-4 left-4 right-4 md:left-auto md:right-6 md:max-w-md z-50 bg-white border border-slate-200 rounded-xl shadow-lg p-4 text-slate-800"
+      className="fixed bottom-4 left-4 right-4 md:left-auto md:right-6 md:max-w-md z-50 animate-fade-in-up"
+      style={{
+        border: '2.5px solid var(--color-quelle-ink)',
+        borderRadius: 'var(--radius-brutal)',
+        boxShadow: 'var(--shadow-brutal)',
+        background: 'white',
+        padding: '20px',
+      }}
     >
-      <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-        This site uses cookies. [Details placeholder]
-      </p>
-      <div className="flex items-center gap-2 mt-3 justify-end">
+      <div className="flex items-start gap-3">
+        <div className="icon-chip icon-chip-yellow icon-chip-sm flex items-center justify-center flex-shrink-0 mt-0.5">
+          <Cookie size={16} strokeWidth={2.5} />
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-bold mb-1" style={{ color: 'var(--color-quelle-ink)' }}>
+            Cookie Notice
+          </p>
+          <p className="text-xs leading-relaxed" style={{ color: 'var(--color-quelle-ink-muted)' }}>
+            We use cookies to enhance your experience. By continuing to use Quelle, you agree to our cookie policy.
+          </p>
+        </div>
         <button
           onClick={() => handleConsent('rejected')}
-          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-medium transition-colors cursor-pointer"
+          className="flex-shrink-0 cursor-pointer p-1"
+          style={{ background: 'none', border: 'none', color: 'var(--color-quelle-ink-muted)' }}
+          aria-label="Dismiss"
+        >
+          <X size={16} />
+        </button>
+      </div>
+      <div className="flex items-center gap-2 mt-4 justify-end">
+        <button
+          onClick={() => handleConsent('rejected')}
+          className="btn-brutal btn-brutal-secondary text-xs py-2 px-4 cursor-pointer"
         >
           Reject
         </button>
         <button
           onClick={() => handleConsent('accepted')}
-          className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs font-medium transition-colors cursor-pointer"
+          className="btn-brutal btn-brutal-primary text-xs py-2 px-4 cursor-pointer"
         >
           Accept
         </button>
