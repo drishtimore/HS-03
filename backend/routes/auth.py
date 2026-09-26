@@ -1,48 +1,16 @@
-import hashlib
-import os
-import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Dict
-from fastapi import APIRouter, HTTPException, status
-import hmac
-import base64
-import json
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
-from backend.models.user import UserRegister, UserLogin, UserResponse, TokenResponse
+from backend.core.database import get_db
+from backend.core.security import hash_password, verify_password, create_jwt_token, get_current_user
+from backend.models.user import User, Organization, UserRegister, UserLogin, UserResponse, TokenResponse
+from backend.models.audit import AuditLog
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# In-memory mock datastore for skeleton prototype
-users_db: Dict[str, dict] = {}
-
-JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-prototype-jwt-key")
-JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
-
-def hash_password(password: str) -> str:
-    """Hashes password with SHA256 and salt."""
-    salt = os.getenv("PASSWORD_SALT", "prototype_salt_HS03")
-    return hashlib.sha256(f"{salt}{password}".encode("utf-8")).hexdigest()
-
-def create_jwt_token(payload: dict) -> str:
-    """Generates standard JWT token using HMAC-SHA256."""
-    header = {"alg": JWT_ALGORITHM, "typ": "JWT"}
-    header_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).decode().rstrip("=")
-    
-    token_payload = payload.copy()
-    exp = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    token_payload["exp"] = int(exp.timestamp())
-    payload_b64 = base64.urlsafe_b64encode(json.dumps(token_payload).encode()).decode().rstrip("=")
-    
-    signature_data = f"{header_b64}.{payload_b64}".encode()
-    signature = hmac.new(JWT_SECRET.encode(), signature_data, hashlib.sha256).digest()
-    sig_b64 = base64.urlsafe_b64encode(signature).decode().rstrip("=")
-    
-    return f"{header_b64}.{payload_b64}.{sig_b64}"
-
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-def register(user_data: UserRegister):
-    # Validation: passwords match
+def register(user_data: UserRegister, db: Session = Depends(get_db)):
+    # Validate password match
     if user_data.password != user_data.confirm_password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -50,55 +18,106 @@ def register(user_data: UserRegister):
         )
     
     email_key = user_data.email.lower()
-    if email_key in users_db:
+    existing_user = db.query(User).filter(User.email == email_key).first()
+    if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="An account with this email already exists",
         )
     
-    user_id = str(uuid.uuid4())
-    hashed_pwd = hash_password(user_data.password)
-    
-    record = {
-        "id": user_id,
-        "full_name": user_data.full_name,
-        "email": email_key,
-        "hashed_password": hashed_pwd,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    users_db[email_key] = record
+    # Assign or create organization
+    org = db.query(Organization).first()
+    org_id = org.id if org else None
 
-    token = create_jwt_token({"sub": user_id, "email": email_key})
-    
+    new_user = User(
+        email=email_key,
+        full_name=user_data.full_name,
+        password_hash=hash_password(user_data.password),
+        role=user_data.role or "editor",
+        organization_id=org_id
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    # Log audit entry
+    audit = AuditLog(
+        user_id=new_user.id,
+        action="user_registered",
+        target_id=new_user.id,
+        details={"email": email_key, "full_name": user_data.full_name}
+    )
+    db.add(audit)
+    db.commit()
+
+    token = create_jwt_token({
+        "sub": new_user.id,
+        "email": new_user.email,
+        "role": new_user.role,
+        "organization_id": new_user.organization_id
+    })
+
     return TokenResponse(
         access_token=token,
         token_type="bearer",
         user=UserResponse(
-            id=user_id,
-            full_name=user_data.full_name,
-            email=user_data.email,
+            id=new_user.id,
+            full_name=new_user.full_name,
+            email=new_user.email,
+            role=new_user.role,
+            organization_id=new_user.organization_id
         ),
     )
 
 @router.post("/login", response_model=TokenResponse)
-def login(login_data: UserLogin):
+def login(login_data: UserLogin, db: Session = Depends(get_db)):
     email_key = login_data.email.lower()
-    record = users_db.get(email_key)
+    user = db.query(User).filter(User.email == email_key).first()
     
-    if not record or record["hashed_password"] != hash_password(login_data.password):
+    if not user or not verify_password(login_data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
     
-    token = create_jwt_token({"sub": record["id"], "email": email_key})
-    
+    token = create_jwt_token({
+        "sub": user.id,
+        "email": user.email,
+        "role": user.role,
+        "organization_id": user.organization_id
+    })
+
+    # Log audit
+    audit = AuditLog(
+        user_id=user.id,
+        action="user_login",
+        target_id=user.id,
+        details={"email": email_key}
+    )
+    db.add(audit)
+    db.commit()
+
     return TokenResponse(
         access_token=token,
         token_type="bearer",
         user=UserResponse(
-            id=record["id"],
-            full_name=record["full_name"],
-            email=record["email"],
+            id=user.id,
+            full_name=user.full_name,
+            email=user.email,
+            role=user.role,
+            organization_id=user.organization_id
         ),
+    )
+
+@router.get("/me", response_model=UserResponse)
+def get_current_profile(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == current_user["sub"]).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return UserResponse(
+        id=user.id,
+        full_name=user.full_name,
+        email=user.email,
+        role=user.role,
+        organization_id=user.organization_id
     )
