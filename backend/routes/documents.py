@@ -43,24 +43,31 @@ async def upload_documents(
         content_hash = IngestionService.compute_sha256(str(saved_path))
         file_size = os.path.getsize(saved_path)
 
-        # Check deduplication within workspace
+        # Check deduplication within workspace by content hash or identical filename
         existing = db.query(Document).filter(
             Document.workspace_id == workspace_id,
-            Document.content_hash == content_hash
+            (Document.content_hash == content_hash) | (Document.filename == file.filename)
         ).first()
 
         if existing:
-            # Clean up duplicate file
+            # Clean up duplicate file immediately from storage
             try:
                 os.remove(saved_path)
             except Exception:
                 pass
+
+            if len(files) == 1:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Duplicate file detected: '{file.filename}' has already been uploaded in this workspace (Document ID: {existing.id}, Status: {existing.status}). Duplicate upload blocked."
+                )
+
             uploaded_records.append({
                 "document_id": existing.id,
-                "filename": existing.filename,
-                "status": existing.status,
+                "filename": file.filename,
+                "status": "rejected_duplicate",
                 "is_duplicate": True,
-                "message": "Identical document already indexed in workspace (Deduplicated)"
+                "message": f"Rejected: '{file.filename}' is already indexed in workspace (Deduplicated)"
             })
             continue
 
@@ -102,6 +109,12 @@ async def upload_documents(
             "is_duplicate": False,
             "message": "Document queued for processing"
         })
+
+    if uploaded_records and all(r.get("is_duplicate") for r in uploaded_records):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"All {len(files)} file(s) already exist in this workspace. Upload blocked to prevent duplicates."
+        )
 
     return {
         "workspace_id": workspace_id,

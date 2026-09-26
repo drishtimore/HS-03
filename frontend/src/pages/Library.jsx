@@ -148,7 +148,38 @@ export default function LibraryView() {
 
       // Track uploaded document statuses
       const results = res.results || [];
-      const docIds = results.map((r) => r.document_id).filter(Boolean);
+      const duplicates = results.filter((r) => r.is_duplicate);
+      const validDocs = results.filter((r) => !r.is_duplicate);
+
+      if (duplicates.length > 0) {
+        setUploadQueue((prev) =>
+          prev.map((u) => {
+            const isDup = duplicates.some((d) => d.filename === u.name);
+            return isDup
+              ? { ...u, progress: 100, status: '⚠️ Blocked: Duplicate File Already Ingested' }
+              : u;
+          })
+        );
+      }
+
+      const docIds = validDocs.map((r) => r.document_id).filter(Boolean);
+
+      if (docIds.length === 0) {
+        setTimeout(() => {
+          setUploadQueue([]);
+          fetchDocuments();
+        }, 3500);
+        return;
+      }
+
+      // Update progress for valid documents to 60%
+      setUploadQueue((prev) =>
+        prev.map((u) =>
+          duplicates.some((d) => d.filename === u.name)
+            ? u
+            : { ...u, progress: 60, status: 'Processing Pipeline...' }
+        )
+      );
 
       // Poll until processed
       let pollCount = 0;
@@ -178,7 +209,11 @@ export default function LibraryView() {
           }, 1200);
         } else {
           setUploadQueue((prev) =>
-            prev.map((u) => ({ ...u, progress: Math.min(60 + pollCount * 8, 95) }))
+            prev.map((u) =>
+              duplicates.some((d) => d.filename === u.name)
+                ? u
+                : { ...u, progress: Math.min(60 + pollCount * 8, 95) }
+            )
           );
         }
       }, 1500);
@@ -186,10 +221,17 @@ export default function LibraryView() {
       fetchDocuments();
     } catch (err) {
       console.error('Upload error:', err);
+      const isDuplicate = err.message?.toLowerCase().includes('duplicate');
       setUploadQueue((prev) =>
-        prev.map((u) => ({ ...u, progress: 100, status: `Failed: ${err.message}` }))
+        prev.map((u) => ({
+          ...u,
+          progress: 100,
+          status: isDuplicate
+            ? '⚠️ Blocked: Duplicate file already exists in library'
+            : `Failed: ${err.message}`,
+        }))
       );
-      setTimeout(() => setUploadQueue([]), 3000);
+      setTimeout(() => setUploadQueue([]), 4500);
     }
   };
 

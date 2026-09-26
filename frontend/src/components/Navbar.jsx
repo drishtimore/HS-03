@@ -11,6 +11,7 @@ import {
   ChevronDown,
   User,
   Home as HomeIcon,
+  ScanLine,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -24,6 +25,7 @@ export default function Navbar() {
   const navLinks = [
     { path: '/', label: 'Home', icon: HomeIcon },
     { path: '/library', label: 'Library', icon: Library },
+    { path: '/image-to-text', label: 'Image OCR', icon: ScanLine },
     { path: '/chat', label: 'Chat', icon: MessageSquare },
     ...(isAdmin ? [{ path: '/admin', label: 'Admin', icon: LayoutDashboard }] : []),
     { path: '/contact', label: 'Contact', icon: FileText },

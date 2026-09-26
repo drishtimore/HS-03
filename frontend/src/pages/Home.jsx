@@ -36,12 +36,12 @@ const featureCards = [
   {
     icon: ScanLine,
     color: 'icon-chip-orange',
-    title: 'Intelligent OCR',
-    desc: 'Automatic deskew, denoise, and high-accuracy OCR with confidence scoring.',
-    formats: 'Scans, Photos, Receipts, Invoices',
-    accept: '.pdf,.png,.jpg,.jpeg,.tiff',
-    link: '/library',
-    actionLabel: 'Upload Scan for OCR',
+    title: 'Image-to-Text OCR',
+    desc: 'Deep learning RapidOCR workbench: upload photos, scans, and images for live bounding box text extraction.',
+    formats: 'PNG, JPG, JPEG, WEBP, TIFF, BMP',
+    accept: '.png,.jpg,.jpeg,.webp,.tiff,.bmp',
+    link: '/image-to-text',
+    actionLabel: 'Launch Image OCR',
   },
   {
     icon: Table2,
@@ -140,14 +140,36 @@ export default function Home() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Feature 1: Image-to-Text OCR Workbench
+    if (index === 1) {
+      setUploadingIndex(index);
+      setUploadMessage(`Opening Image-to-Text OCR for "${file.name}"...`);
+      setTimeout(() => {
+        setUploadingIndex(null);
+        setUploadMessage('');
+        navigate('/image-to-text', { state: { preloadedFile: file } });
+      }, 600);
+      return;
+    }
+
     setUploadingIndex(index);
     setUploadMessage(`Uploading & processing "${file.name}"...`);
 
     try {
       const wsId = activeWorkspace?.id || 'a388c08d-67f1-45ee-a10d-e2e9583c0dee';
       const res = await api.documents.upload(wsId, [file]);
-      const newDocId = res?.results?.[0]?.document_id;
+      const result = res?.results?.[0];
 
+      if (result?.is_duplicate) {
+        setUploadMessage(`⚠️ Duplicate Blocked: "${file.name}" already exists in this workspace!`);
+        setTimeout(() => {
+          setUploadingIndex(null);
+          setUploadMessage('');
+        }, 4000);
+        return;
+      }
+
+      const newDocId = result?.document_id;
       setUploadMessage(`✓ Ingested "${file.name}" to Library!`);
 
       setTimeout(() => {
@@ -163,11 +185,12 @@ export default function Home() {
       }, 1000);
     } catch (err) {
       console.error('Feature upload error:', err);
-      setUploadMessage(`Upload failed: ${err.message}`);
+      const isDup = err.message?.toLowerCase().includes('duplicate');
+      setUploadMessage(isDup ? `⚠️ Duplicate Blocked: ${err.message}` : `Upload failed: ${err.message}`);
       setTimeout(() => {
         setUploadingIndex(null);
         setUploadMessage('');
-      }, 3500);
+      }, 4500);
     }
   };
 

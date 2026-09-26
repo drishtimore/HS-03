@@ -10,6 +10,7 @@ from backend.routes.workspaces import router as workspaces_router
 from backend.routes.documents import router as documents_router
 from backend.routes.conversations import router as conversations_router
 from backend.routes.admin import router as admin_router
+from backend.routes.ocr import router as ocr_router
 from backend.routes.ws import router as ws_router
 
 @asynccontextmanager
@@ -44,6 +45,7 @@ app.include_router(workspaces_router, prefix=settings.API_V1_PREFIX)
 app.include_router(documents_router, prefix=settings.API_V1_PREFIX)
 app.include_router(conversations_router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin_router, prefix=settings.API_V1_PREFIX)
+app.include_router(ocr_router, prefix=settings.API_V1_PREFIX)
 
 # Include WebSocket router
 app.include_router(ws_router)

@@ -48,6 +48,7 @@ export default function ChatView() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [scopeMode, setScopeMode] = useState('selected'); // 'selected' | 'all'
+  const [selectedFileScope, setSelectedFileScope] = useState(null); // When set, chats exclusively with this 1 file
   const [availableDocs, setAvailableDocs] = useState([]);
   const [pinnedDocs, setPinnedDocs] = useState([]);
   const [showDocScope, setShowDocScope] = useState(false);
@@ -125,8 +126,9 @@ export default function ChatView() {
 
     try {
       let currentConvId = conversationId;
-      const activeDocIds =
-        scopeMode === 'all' ? availableDocs.map((d) => d.id) : pinnedDocs.map((d) => d.id);
+      const activeDocIds = selectedFileScope
+        ? [selectedFileScope.id]
+        : (scopeMode === 'all' ? availableDocs.map((d) => d.id) : pinnedDocs.map((d) => d.id));
 
       // 1. Create conversation if not exists
       if (!currentConvId && activeWorkspace?.id) {
@@ -380,6 +382,32 @@ export default function ChatView() {
             </div>
           )}
 
+          {/* Active Single File Scope Banner */}
+          {selectedFileScope && (
+            <div
+              className="px-4 py-2.5 flex items-center justify-between text-xs font-bold animate-fade-in"
+              style={{
+                background: 'var(--color-quelle-yellow)',
+                borderBottom: '2.5px solid var(--color-quelle-ink)',
+              }}
+            >
+              <div className="flex items-center gap-2 truncate">
+                <span className="px-2 py-0.5 rounded bg-black text-white text-[10px] font-black uppercase tracking-wider">
+                  Targeted Scope
+                </span>
+                <span className="truncate text-black">
+                  Chatting exclusively on: <span className="underline font-black">{selectedFileScope.name}</span>
+                </span>
+              </div>
+              <button
+                onClick={() => setSelectedFileScope(null)}
+                className="flex items-center gap-1 text-[11px] font-black px-2.5 py-1 rounded bg-white hover:bg-gray-100 border border-black cursor-pointer shadow-xs shrink-0 ml-2"
+              >
+                <X size={12} strokeWidth={3} /> Switch to All Files
+              </button>
+            </div>
+          )}
+
           {/* Message history */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.map((msg) => (
@@ -600,7 +628,11 @@ export default function ChatView() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Ask a question about your indexed documents..."
+                  placeholder={
+                    selectedFileScope
+                      ? `Ask anything about "${selectedFileScope.name}" (Single File Scope)...`
+                      : "Ask a question about your indexed documents..."
+                  }
                   rows={1}
                   className="input-brutal pr-12 resize-none"
                   style={{ minHeight: '44px', maxHeight: '120px' }}
@@ -653,45 +685,88 @@ export default function ChatView() {
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {/* Scope info */}
+            {/* Scope info & Interactive Selector */}
             <div>
-              <p className="label-brutal">Active Search Scope</p>
-              <p className="text-sm font-semibold">
-                {scopeMode === 'all'
-                  ? 'All workspace documents'
-                  : `${pinnedDocs.length} pinned document(s)`}
-              </p>
-            </div>
-
-            {/* Pinned docs list */}
-            {scopeMode === 'selected' && (
-              <div>
-                <p className="label-brutal">Pinned Sources</p>
-                <div className="space-y-1.5">
-                  {pinnedDocs.map((doc) => (
-                    <Link
-                      key={doc.id}
-                      to={`/viewer/${doc.id}`}
-                      className="flex items-center gap-2 p-2 no-underline hover:bg-gray-50"
-                      style={{
-                        textDecoration: 'none',
-                        color: 'inherit',
-                        border: '1.5px solid var(--color-quelle-border-light)',
-                        borderRadius: 'var(--radius-brutal-sm)',
-                        background: 'white',
-                      }}
-                    >
-                      <FileText
-                        size={12}
-                        strokeWidth={2.5}
-                        style={{ color: 'var(--color-quelle-ink-muted)', flexShrink: 0 }}
-                      />
-                      <span className="text-xs font-semibold truncate">{doc.name}</span>
-                    </Link>
-                  ))}
-                </div>
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="label-brutal mb-0">Document Focus Scope</p>
+                {selectedFileScope && (
+                  <button
+                    onClick={() => setSelectedFileScope(null)}
+                    className="text-[10px] font-bold text-gray-700 underline hover:text-black cursor-pointer"
+                  >
+                    Reset to All
+                  </button>
+                )}
               </div>
-            )}
+              
+              <div className="space-y-1.5">
+                {/* Option 1: All Documents */}
+                <div
+                  onClick={() => setSelectedFileScope(null)}
+                  className={`flex items-center justify-between p-2 rounded cursor-pointer transition-all ${
+                    !selectedFileScope
+                      ? 'border-2 border-black bg-amber-100 font-bold shadow-xs'
+                      : 'border border-gray-300 bg-white hover:bg-gray-50 text-gray-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 truncate">
+                    <Globe size={13} className={!selectedFileScope ? 'text-black' : 'text-gray-400'} />
+                    <span className="text-xs truncate">All Workspace Documents</span>
+                  </div>
+                  {!selectedFileScope && (
+                    <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-black text-white shrink-0 ml-1">
+                      Active
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[10px] font-semibold text-gray-500 pt-1">
+                  Click a file below to chat ONLY on that file:
+                </p>
+
+                {/* Option 2..N: Individual Document Cards */}
+                {availableDocs.map((doc) => {
+                  const isSelected = selectedFileScope?.id === doc.id;
+                  return (
+                    <div
+                      key={doc.id}
+                      onClick={() => setSelectedFileScope(isSelected ? null : doc)}
+                      className={`flex items-center justify-between p-2 rounded cursor-pointer transition-all ${
+                        isSelected
+                          ? 'border-2 border-black bg-yellow-200 shadow-sm font-bold'
+                          : 'border border-gray-300 bg-white hover:bg-amber-50/60'
+                      }`}
+                      title={isSelected ? 'Click to deselect single file scope' : `Click to chat exclusively on ${doc.name}`}
+                    >
+                      <div className="flex items-center gap-1.5 truncate flex-1 mr-1">
+                        <FileText
+                          size={13}
+                          className={isSelected ? 'text-black' : 'text-gray-500'}
+                          style={{ flexShrink: 0 }}
+                        />
+                        <span className="text-xs truncate">{doc.name}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isSelected && (
+                          <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-black text-white">
+                            Targeted
+                          </span>
+                        )}
+                        <Link
+                          to={`/viewer/${doc.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-1 hover:bg-black/10 rounded text-gray-600 hover:text-black"
+                          title="Open in Document Viewer"
+                        >
+                          <BookOpen size={11} />
+                        </Link>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
 
             {/* Conversation stats */}
             <div>

@@ -15,6 +15,7 @@ import ForgotPassword from './pages/auth/ForgotPassword';
 import Library from './pages/Library';
 import DocumentViewer from './pages/DocumentViewer';
 import Chat from './pages/Chat';
+import ImageToText from './pages/ImageToText';
 import Admin from './pages/Admin';
 import Profile from './pages/Profile';
 
@@ -32,6 +33,7 @@ export default function App() {
             <Route path="library" element={<Library />} />
             <Route path="viewer/:id" element={<DocumentViewer />} />
             <Route path="chat" element={<Chat />} />
+            <Route path="image-to-text" element={<ImageToText />} />
             <Route path="admin" element={<RequireAdmin><Admin /></RequireAdmin>} />
 
             {/* User profile */}

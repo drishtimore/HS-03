@@ -191,6 +191,21 @@ export const api = {
     },
   },
 
+  // ── OCR & Vision ──
+  ocr: {
+    async imageToText(file, workspaceId = null) {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (workspaceId) {
+        formData.append('save_to_workspace_id', workspaceId);
+      }
+      return await request('/ocr/image-to-text', {
+        method: 'POST',
+        body: formData,
+      });
+    },
+  },
+
   // ── WebSocket Helper ──
   createProgressSocket(documentId, onMessage, onError, onClose) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
