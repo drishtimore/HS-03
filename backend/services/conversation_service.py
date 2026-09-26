@@ -140,7 +140,30 @@ QUESTION: {query}
             )
         evidence_block = "\n".join(evidence_lines)
 
-        # 1. External LLM call (Claude API or OpenAI) if key available
+        # 1. Try Gemini API (free tier, best for hackathon demos)
+        if settings.GEMINI_API_KEY:
+            try:
+                import httpx
+                prompt_text = cls.SYSTEM_PROMPT.format(evidence_block=evidence_block, query=query)
+                resp = httpx.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.GEMINI_API_KEY}",
+                    headers={"content-type": "application/json"},
+                    json={
+                        "contents": [{"parts": [{"text": prompt_text}]}],
+                        "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.2}
+                    },
+                    timeout=25.0
+                )
+                if resp.status_code == 200:
+                    candidates = resp.json().get("candidates", [])
+                    if candidates:
+                        ans = candidates[0]["content"]["parts"][0]["text"].strip()
+                        if ans:
+                            return ans
+            except Exception:
+                pass
+
+        # 2. Claude API fallback
         if settings.ANTHROPIC_API_KEY:
             try:
                 import httpx
@@ -167,23 +190,28 @@ QUESTION: {query}
             except Exception:
                 pass
 
-        # 2. Resilient Deterministic Synthesis Engine
-        # Crafts exact, grounded sentences directly mapped to citation indices
+        # 3. Resilient Deterministic Synthesis Engine
+        # Builds a structured grounded answer paragraph from top evidence
+        intro = f"Based on the retrieved documents, here is what was found regarding your query:\n\n"
         answer_parts = []
-        for idx, ev in enumerate(evidence[:4]):
+        for idx, ev in enumerate(evidence[:5]):
             marker = f"[{idx + 1}]"
-            snip = ev["snippet"].replace("###", "").strip()
-            # Extract first 1-2 clean sentences
-            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", snip) if s.strip()]
-            summary_sentence = sentences[0] if sentences else snip[:150]
-            answer_parts.append(f"{summary_sentence} {marker}")
+            snip = ev["snippet"].replace("###", "").replace("**", "").strip()
+            doc_ref = f"({ev['document_name']}, Page {ev['page_number']})"
+            # Extract up to 2 clean sentences
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", snip) if s.strip() and len(s.strip()) > 10]
+            text = " ".join(sentences[:2]) if sentences else snip[:200]
+            answer_parts.append(f"- {text} {marker} {doc_ref}")
+
+        body = "\n".join(answer_parts)
+        full_answer = intro + body
 
         if conflicts_detected and conflict_details:
             c = conflict_details[0]
-            conflict_note = f"\n\n**Note: Discrepancy Found:** {c['explanation']}"
-            return " ".join(answer_parts) + conflict_note
+            conflict_note = f"\n\n⚠️ **Discrepancy Detected:** {c['explanation']}"
+            return full_answer + conflict_note
 
-        return " ".join(answer_parts)
+        return full_answer
 
     @classmethod
     def process_query(

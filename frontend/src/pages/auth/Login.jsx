@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { LogIn, Mail, Lock, ArrowRight, Search } from 'lucide-react';
+import { LogIn, Mail, Lock, ArrowRight, Search, Zap } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 export default function Login() {
@@ -41,7 +41,18 @@ export default function Login() {
     }
   };
 
-  const { login, loginWithCredentials } = useAuth();
+  const { loginWithCredentials } = useAuth();
+
+  const DEMO_ACCOUNTS = [
+    { label: 'Admin', email: 'priya@acme.com', password: 'Demo@1234', role: 'admin' },
+    { label: 'Editor', email: 'rahul@acme.com', password: 'Demo@1234', role: 'editor' },
+    { label: 'Viewer', email: 'ananya@acme.com', password: 'Demo@1234', role: 'viewer' },
+  ];
+
+  const fillDemo = (account) => {
+    setFormData({ email: account.email, password: account.password });
+    setErrors({});
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -51,62 +62,24 @@ export default function Login() {
     setErrors({});
 
     try {
-      // 1. Attempt real backend login
       if (loginWithCredentials) {
         const res = await loginWithCredentials(formData.email, formData.password);
         if (res.success) {
           setIsLoading(false);
           navigate('/library');
           return;
+        } else {
+          setErrors({ email: res.error || 'Invalid email or password' });
+          setIsLoading(false);
+          return;
         }
       }
-
-      // 2. Fallback to mock / demo credentials
-      const existingUsersStr = localStorage.getItem('mock_users');
-      const existingUsers = existingUsersStr ? JSON.parse(existingUsersStr) : [];
-      let userToLog = existingUsers.find(
-        (u) => u.email === formData.email && u.password === formData.password
-      );
-
-      if (!userToLog && formData.email === 'admin@gmail.com' && formData.password === 'admin@123') {
-        userToLog = {
-          id: 'usr-admin',
-          name: 'Admin User',
-          email: formData.email,
-          role: 'admin',
-          workspaces: [{ id: 'a388c08d-67f1-45ee-a10d-e2e9583c0dee', name: 'General Intelligence Workspace' }],
-        };
-      } else if (!userToLog && formData.email === 'priya@acme.com') {
-        userToLog = {
-          id: '5a3087f1-f51f-4277-be51-206b4c631b3d',
-          name: 'Priya Sharma',
-          email: 'priya@acme.com',
-          role: 'admin',
-        };
-      }
-
-      if (!userToLog) {
-        setErrors({ email: 'Invalid email or password' });
-        setIsLoading(false);
-        return;
-      }
-
-      const role = userToLog.role || 'editor';
-      const name = userToLog.name || formData.email.split('@')[0];
-      login('mock-token-session', {
-        id: userToLog.id || 'usr-' + Date.now(),
-        name: name,
-        email: formData.email,
-        role: role,
-        workspaces: userToLog.workspaces || [],
-      });
-      setIsLoading(false);
-      navigate('/library');
     } catch (err) {
       setIsLoading(false);
-      setErrors({ email: err.message || 'Login failed' });
+      setErrors({ email: err.message || 'Login failed. Check your credentials.' });
     }
   };
+
 
   return (
     <main
@@ -232,6 +205,45 @@ export default function Login() {
               Create one
             </Link>
           </div>
+
+          {/* Demo credentials panel */}
+          <div
+            className="mt-5 p-3 rounded"
+            style={{
+              background: 'var(--color-quelle-cream)',
+              border: '1.5px dashed var(--color-quelle-ink)',
+              borderRadius: 'var(--radius-brutal-sm)',
+            }}
+          >
+            <div className="flex items-center gap-1.5 mb-2">
+              <Zap size={13} strokeWidth={2.5} style={{ color: 'var(--color-quelle-orange-dark)' }} />
+              <span className="text-xs font-bold uppercase" style={{ color: 'var(--color-quelle-ink)' }}>
+                Demo Quick Login
+              </span>
+              <span className="text-[0.6rem] ml-auto" style={{ color: 'var(--color-quelle-ink-muted)' }}>
+                password: Demo@1234
+              </span>
+            </div>
+            <div className="flex gap-2">
+              {DEMO_ACCOUNTS.map((acc) => (
+                <button
+                  key={acc.email}
+                  type="button"
+                  onClick={() => fillDemo(acc)}
+                  className="flex-1 text-xs py-1.5 font-bold cursor-pointer transition-all hover:opacity-80"
+                  style={{
+                    border: '1.5px solid var(--color-quelle-ink)',
+                    borderRadius: 'var(--radius-brutal-sm)',
+                    background: acc.role === 'admin' ? 'var(--color-quelle-yellow)' : acc.role === 'editor' ? '#c7f7e4' : '#dde8ff',
+                    color: 'var(--color-quelle-ink)',
+                  }}
+                >
+                  {acc.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
         </div>
       </div>
     </main>

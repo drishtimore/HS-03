@@ -48,9 +48,9 @@ class Settings(BaseSettings):
     LLM_MODEL: str = os.getenv("LLM_MODEL", "claude-3-5-sonnet")
     
     # Retrieval & Confidence parameters (PRD §5.7, §12)
-    CONFIDENCE_GATE_THRESHOLD: float = float(os.getenv("CONFIDENCE_GATE_THRESHOLD", "0.25"))
-    HIGH_CONFIDENCE_THRESHOLD: float = float(os.getenv("HIGH_CONFIDENCE_THRESHOLD", "0.80"))
-    MEDIUM_CONFIDENCE_THRESHOLD: float = float(os.getenv("MEDIUM_CONFIDENCE_THRESHOLD", "0.50"))
+    CONFIDENCE_GATE_THRESHOLD: float = float(os.getenv("CONFIDENCE_GATE_THRESHOLD", "0.10"))
+    HIGH_CONFIDENCE_THRESHOLD: float = float(os.getenv("HIGH_CONFIDENCE_THRESHOLD", "0.60"))
+    MEDIUM_CONFIDENCE_THRESHOLD: float = float(os.getenv("MEDIUM_CONFIDENCE_THRESHOLD", "0.30"))
     OCR_CONFIDENCE_THRESHOLD: float = float(os.getenv("OCR_CONFIDENCE_THRESHOLD", "0.60"))
     
     # RAG candidate limits

@@ -147,8 +147,8 @@ export default function ChatView() {
         role: 'assistant',
         content: res.answer,
         confidence: res.confidence_level || 'high',
-        citations: (res.citations || []).map((c) => ({
-          id: c.citation_index,
+        citations: (res.citations || []).map((c, idx) => ({
+          id: idx + 1,
           document_id: c.document_id,
           document_name: c.document_name,
           page_number: c.page_number,
@@ -185,28 +185,51 @@ export default function ChatView() {
   };
 
   const renderContent = (content) => {
-    return content.split(/(\*\*[^*]+\*\*|\[\d+\])/g).map((part, i) => {
-      if (/^\*\*[^*]+\*\*$/.test(part)) {
-        return <strong key={i}>{part.replace(/\*\*/g, '')}</strong>;
-      }
-      if (/^\[\d+\]$/.test(part)) {
-        const num = part.replace(/[[\]]/g, '');
-        return (
-          <button
-            key={i}
-            className="citation-chip mx-0.5 align-middle"
-            onClick={() =>
-              setExpandedCitation(expandedCitation === parseInt(num) ? null : parseInt(num))
-            }
-            aria-label={`Citation ${num}`}
-          >
-            {num}
-          </button>
-        );
-      }
-      return <span key={i}>{part}</span>;
+    if (!content) return null;
+    // Split by newlines to handle multi-line answers
+    const lines = content.split('\n');
+    return lines.map((line, lineIdx) => {
+      // Parse inline formatting: **bold**, [N] citations
+      const parts = line.split(/(\*\*[^*]+\*\*|\[(\d+)\])/g);
+      const rendered = parts.map((part, i) => {
+        if (/^\*\*[^*]+\*\*$/.test(part)) {
+          return <strong key={i}>{part.replace(/\*\*/g, '')}</strong>;
+        }
+        if (/^\[\d+\]$/.test(part)) {
+          const num = part.replace(/[[\]]/g, '');
+          return (
+            <button
+              key={i}
+              className="citation-chip mx-0.5 align-middle"
+              onClick={() =>
+                setExpandedCitation(expandedCitation === parseInt(num) ? null : parseInt(num))
+              }
+              aria-label={`Citation ${num}`}
+            >
+              {num}
+            </button>
+          );
+        }
+        return <span key={i}>{part}</span>;
+      });
+
+      // Bullet line style
+      const isBullet = line.trim().startsWith('- ') || line.trim().startsWith('• ');
+      return (
+        <p
+          key={lineIdx}
+          style={{
+            margin: isBullet ? '4px 0' : lineIdx === 0 ? '0' : '8px 0 0 0',
+            paddingLeft: isBullet ? '8px' : undefined,
+            borderLeft: isBullet ? '3px solid var(--color-quelle-orange)' : undefined,
+          }}
+        >
+          {rendered}
+        </p>
+      );
     });
   };
+
 
   return (
     <main className="max-w-[1400px] mx-auto px-4 sm:px-6 py-6">
