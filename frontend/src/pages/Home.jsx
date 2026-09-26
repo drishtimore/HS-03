@@ -1,5 +1,5 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Search,
   FileText,
@@ -15,7 +15,12 @@ import {
   BookOpen,
   BarChart3,
   Lock,
+  Loader2,
+  UploadCloud,
+  ExternalLink,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { api } from '../services/api';
 
 const featureCards = [
   {
@@ -23,42 +28,60 @@ const featureCards = [
     color: 'icon-chip-green',
     title: 'Multi-Format Ingestion',
     desc: 'Upload PDFs, images, DOCX, spreadsheets, and scans through one unified flow.',
+    formats: 'PDF, DOCX, CSV, TXT, PNG',
+    accept: '.pdf,.docx,.doc,.csv,.xlsx,.txt,.png,.jpg,.jpeg',
     link: '/library',
+    actionLabel: 'Ingest Document',
   },
   {
     icon: ScanLine,
     color: 'icon-chip-orange',
     title: 'Intelligent OCR',
     desc: 'Automatic deskew, denoise, and high-accuracy OCR with confidence scoring.',
+    formats: 'Scans, Photos, Receipts, Invoices',
+    accept: '.pdf,.png,.jpg,.jpeg,.tiff',
     link: '/library',
+    actionLabel: 'Upload Scan for OCR',
   },
   {
     icon: Table2,
     color: 'icon-chip-teal',
     title: 'Table Extraction',
     desc: 'Structured table data extracted as queryable JSON — even from scanned docs.',
-    link: '/viewer/1',
+    formats: 'CSV, XLSX, Spreadsheets, Tabular PDFs',
+    accept: '.csv,.xlsx,.xls,.pdf',
+    link: '/library',
+    actionLabel: 'Extract Table Data',
   },
   {
     icon: Brain,
     color: 'icon-chip-purple',
     title: 'Semantic Search',
     desc: 'Hybrid vector + keyword retrieval with cross-encoder re-ranking for precision.',
+    formats: 'Any Document for Vector Indexing',
+    accept: '.pdf,.docx,.csv,.txt,.png,.jpg',
     link: '/chat',
+    actionLabel: 'Index & Search',
   },
   {
     icon: MessageSquare,
     color: 'icon-chip-pink',
     title: 'Conversational Q&A',
     desc: 'Ask natural-language questions across your documents with full citation trails.',
+    formats: 'Multi-turn Citations & Source Auditing',
+    accept: '.pdf,.docx,.txt,.csv',
     link: '/chat',
+    actionLabel: 'Upload & Ask Questions',
   },
   {
     icon: Shield,
     color: 'icon-chip-yellow',
     title: 'Zero Hallucination',
     desc: 'Every answer grounded in cited evidence. No fabricated claims — ever.',
+    formats: 'Confidence Gated Source Evidence',
+    accept: '.pdf,.docx,.txt,.csv',
     link: '/chat',
+    actionLabel: 'Verify Grounded Evidence',
   },
 ];
 
@@ -101,6 +124,53 @@ const stats = [
 ];
 
 export default function Home() {
+  const navigate = useNavigate();
+  const { activeWorkspace } = useAuth();
+  const [uploadingIndex, setUploadingIndex] = useState(null);
+  const [uploadMessage, setUploadMessage] = useState('');
+  const fileInputRefs = useRef({});
+
+  const handleTriggerUpload = (index) => {
+    if (fileInputRefs.current[index]) {
+      fileInputRefs.current[index].click();
+    }
+  };
+
+  const handleFileChange = async (e, feature, index) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingIndex(index);
+    setUploadMessage(`Uploading & processing "${file.name}"...`);
+
+    try {
+      const wsId = activeWorkspace?.id || 'a388c08d-67f1-45ee-a10d-e2e9583c0dee';
+      const res = await api.documents.upload(wsId, [file]);
+      const newDocId = res?.results?.[0]?.document_id;
+
+      setUploadMessage(`✓ Ingested "${file.name}" to Library!`);
+
+      setTimeout(() => {
+        setUploadingIndex(null);
+        setUploadMessage('');
+        if (index === 2 && newDocId) {
+          navigate(`/viewer/${newDocId}`);
+        } else if (index >= 3) {
+          navigate('/chat');
+        } else {
+          navigate('/library');
+        }
+      }, 1000);
+    } catch (err) {
+      console.error('Feature upload error:', err);
+      setUploadMessage(`Upload failed: ${err.message}`);
+      setTimeout(() => {
+        setUploadingIndex(null);
+        setUploadMessage('');
+      }, 3500);
+    }
+  };
+
   return (
     <main>
       {/* ═══════ HERO SECTION ═══════ */}
@@ -248,41 +318,103 @@ export default function Home() {
               Everything you need.
             </h2>
             <p className="text-base max-w-lg mx-auto" style={{ color: 'var(--color-quelle-ink-muted)' }}>
-              From ingestion to cited answers — one platform handles it all.
+              From multi-format ingestion to cited answers — every feature includes direct document ingestion into your active library.
             </p>
+
+            {uploadMessage && (
+              <div
+                className="mt-6 inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold animate-fade-in"
+                style={{
+                  background: 'var(--color-quelle-yellow)',
+                  border: '2px solid var(--color-quelle-ink)',
+                  boxShadow: 'var(--shadow-brutal-sm)',
+                }}
+              >
+                <CheckCircle2 size={18} strokeWidth={2.5} className="text-green-700" />
+                <span>{uploadMessage}</span>
+              </div>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 stagger-children">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 stagger-children">
             {featureCards.map((feature, i) => (
-              <Link
+              <div
                 key={i}
-                to={feature.link}
-                className="brutal-card p-6 flex flex-col gap-4 no-underline hover:translate-y-[-4px] hover:shadow-[6px_6px_0px_0px_var(--color-quelle-ink)] transition-all cursor-pointer"
-                style={{ textDecoration: 'none', color: 'inherit' }}
+                className="brutal-card p-6 flex flex-col justify-between gap-5 bg-white transition-all hover:translate-y-[-4px] hover:shadow-[6px_6px_0px_0px_var(--color-quelle-ink)]"
               >
-                <div className="flex items-start justify-between">
-                  <div className={`icon-chip ${feature.color} flex items-center justify-center`}>
-                    <feature.icon size={22} strokeWidth={2.5} />
-                  </div>
-                  <span
-                    className="text-xs font-bold"
-                    style={{ color: 'var(--color-quelle-ink-muted)' }}
-                  >
-                    0{i + 1}
-                  </span>
-                </div>
                 <div>
+                  <div className="flex items-start justify-between mb-4">
+                    <div className={`icon-chip ${feature.color} flex items-center justify-center`}>
+                      <feature.icon size={22} strokeWidth={2.5} />
+                    </div>
+                    <span
+                      className="text-xs font-bold px-2 py-0.5 rounded border border-black bg-gray-50"
+                      style={{ color: 'var(--color-quelle-ink-muted)' }}
+                    >
+                      0{i + 1}
+                    </span>
+                  </div>
+
                   <h3
-                    className="text-lg mb-1"
-                    style={{ fontFamily: 'var(--font-display)', fontWeight: 700 }}
+                    className="text-lg font-bold mb-2"
+                    style={{ fontFamily: 'var(--font-display)' }}
                   >
                     {feature.title}
                   </h3>
-                  <p className="text-sm leading-relaxed" style={{ color: 'var(--color-quelle-ink-muted)' }}>
+
+                  <p className="text-sm leading-relaxed mb-3" style={{ color: 'var(--color-quelle-ink-muted)' }}>
                     {feature.desc}
                   </p>
+
+                  <div className="text-[10px] font-extrabold uppercase tracking-wider text-gray-500 mb-2 bg-gray-100 p-1.5 rounded">
+                    Supported: {feature.formats}
+                  </div>
                 </div>
-              </Link>
+
+                {/* Interactive Action Area: Upload Option on all 6 features */}
+                <div className="pt-3 border-t border-gray-200 flex flex-col gap-2">
+                  <input
+                    type="file"
+                    ref={(el) => (fileInputRefs.current[i] = el)}
+                    accept={feature.accept}
+                    onChange={(e) => handleFileChange(e, feature, i)}
+                    className="hidden"
+                  />
+
+                  <button
+                    onClick={() => handleTriggerUpload(i)}
+                    disabled={uploadingIndex === i}
+                    className="btn-brutal btn-brutal-sm flex items-center justify-center gap-1.5 w-full cursor-pointer disabled:opacity-50"
+                    style={{
+                      background: 'var(--color-quelle-yellow)',
+                      border: '2px solid var(--color-quelle-ink)',
+                      padding: '8px 12px',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {uploadingIndex === i ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        <span>Uploading to Library...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload size={14} strokeWidth={2.5} />
+                        <span>Upload File</span>
+                      </>
+                    )}
+                  </button>
+
+                  <Link
+                    to={feature.link}
+                    className="text-xs font-bold text-center text-gray-700 hover:text-black py-1 flex items-center justify-center gap-1 no-underline"
+                  >
+                    <span>Open in Platform</span>
+                    <ExternalLink size={11} strokeWidth={2.5} />
+                  </Link>
+                </div>
+              </div>
             ))}
           </div>
         </div>

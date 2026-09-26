@@ -72,38 +72,25 @@ export default function Register() {
           full_name: formData.fullName,
           password: formData.password,
           confirm_password: formData.confirmPassword,
-          role: formData.email.toLowerCase().includes('admin') ? 'admin' : 'editor',
+          role: formData.email.toLowerCase() === 'admin@gmail.com' ? 'admin' : 'editor',
         });
 
         if (res.success) {
           setIsLoading(false);
-          navigate('/library');
+          // Navigate to login page so the user sees the login page and signs in
+          navigate('/login', {
+            state: {
+              registeredEmail: formData.email,
+              message: 'Account created successfully! Please sign in with your email and password.',
+            },
+          });
+          return;
+        } else {
+          setIsLoading(false);
+          setErrors({ email: res.error || 'An account with this email already exists' });
           return;
         }
       }
-
-      // Fallback
-      const existingUsersStr = localStorage.getItem('mock_users');
-      const existingUsers = existingUsersStr ? JSON.parse(existingUsersStr) : [];
-      if (existingUsers.some((u) => u.email === formData.email)) {
-        setErrors({ email: 'An account with this email already exists' });
-        setIsLoading(false);
-        return;
-      }
-
-      const role = formData.email === 'admin@gmail.com' ? 'admin' : 'editor';
-      const newUser = {
-        id: 'usr-' + Date.now(),
-        name: formData.fullName,
-        email: formData.email,
-        password: formData.password,
-        role: role,
-        workspaces: [{ id: 'a388c08d-67f1-45ee-a10d-e2e9583c0dee', name: 'General Intelligence Workspace' }],
-      };
-      existingUsers.push(newUser);
-      localStorage.setItem('mock_users', JSON.stringify(existingUsers));
-      setIsLoading(false);
-      navigate('/login');
     } catch (err) {
       setIsLoading(false);
       setErrors({ email: err.message || 'Registration failed' });

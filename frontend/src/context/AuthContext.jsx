@@ -114,14 +114,13 @@ export function AuthProvider({ children }) {
   const registerWithCredentials = async (data) => {
     try {
       const res = await api.auth.register(data);
-      const authToken = res.access_token;
       const authUser = {
         id: res.user.id,
         name: res.user.full_name || data.email.split('@')[0],
         email: res.user.email,
         role: res.user.role || 'editor',
       };
-      login(authToken, authUser);
+      // Do not auto-login: user must see and sign in via the login page
       return { success: true, user: authUser };
     } catch (err) {
       return { success: false, error: err.message };

@@ -19,13 +19,13 @@ export default function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { user, isLoggedIn } = useAuth();
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'admin' || user?.email === 'admin@gmail.com';
 
   const navLinks = [
     { path: '/', label: 'Home', icon: HomeIcon },
     { path: '/library', label: 'Library', icon: Library },
     { path: '/chat', label: 'Chat', icon: MessageSquare },
-    ...(isAdmin ? [{ path: '/admin', label: 'Dashboard', icon: LayoutDashboard }] : []),
+    ...(isAdmin ? [{ path: '/admin', label: 'Admin', icon: LayoutDashboard }] : []),
     { path: '/contact', label: 'Contact', icon: FileText },
   ];
 

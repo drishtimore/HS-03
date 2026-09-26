@@ -1,18 +1,29 @@
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { LogIn, Mail, Lock, ArrowRight, Search, Zap } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { LogIn, Mail, Lock, ArrowRight, Search, Zap, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [formData, setFormData] = useState({
-    email: '',
+    email: location.state?.registeredEmail || '',
     password: '',
   });
 
+  const [successMessage, setSuccessMessage] = useState(location.state?.message || '');
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (location.state?.registeredEmail) {
+      setFormData((prev) => ({ ...prev, email: location.state.registeredEmail }));
+    }
+    if (location.state?.message) {
+      setSuccessMessage(location.state.message);
+    }
+  }, [location.state]);
 
   const validate = () => {
     const errs = {};
@@ -44,7 +55,7 @@ export default function Login() {
   const { loginWithCredentials } = useAuth();
 
   const DEMO_ACCOUNTS = [
-    { label: 'Admin', email: 'priya@acme.com', password: 'Demo@1234', role: 'admin' },
+    { label: 'Admin (admin@gmail.com)', email: 'admin@gmail.com', password: 'admin@123', role: 'admin' },
     { label: 'Editor', email: 'rahul@acme.com', password: 'Demo@1234', role: 'editor' },
     { label: 'Viewer', email: 'ananya@acme.com', password: 'Demo@1234', role: 'viewer' },
   ];
@@ -66,7 +77,12 @@ export default function Login() {
         const res = await loginWithCredentials(formData.email, formData.password);
         if (res.success) {
           setIsLoading(false);
-          navigate('/library');
+          // If logged in as admin, route directly to /admin dashboard
+          if (res.user?.role === 'admin' || formData.email.toLowerCase() === 'admin@gmail.com') {
+            navigate('/admin');
+          } else {
+            navigate('/library');
+          }
           return;
         } else {
           setErrors({ email: res.error || 'Invalid email or password' });
@@ -118,6 +134,21 @@ export default function Login() {
           <p className="text-sm text-center mb-6" style={{ color: 'var(--color-quelle-ink-muted)' }}>
             Log in to access your document workspace.
           </p>
+
+          {successMessage && (
+            <div
+              className="p-3 mb-5 rounded-lg flex items-center gap-2.5 text-xs font-bold animate-fade-in"
+              style={{
+                background: '#dcfce7',
+                border: '2px solid var(--color-quelle-green)',
+                color: '#14532d',
+                boxShadow: 'var(--shadow-brutal-sm)',
+              }}
+            >
+              <CheckCircle2 size={18} strokeWidth={2.5} className="shrink-0 text-green-700" />
+              <span>{successMessage}</span>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} noValidate className="space-y-4">
             <div>

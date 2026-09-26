@@ -13,7 +13,8 @@ export default function RequireAdmin({ children }) {
     return <Navigate to="/login" replace />;
   }
 
-  if (user.role !== 'admin') {
+  const isAdmin = user.role === 'admin' || user.email === 'admin@gmail.com';
+  if (!isAdmin) {
     return <Navigate to="/library" replace />;
   }
 
